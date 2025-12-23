@@ -2245,6 +2245,63 @@ function deserializeParamsFromURL() {
     return hasParams;
 }
 
+// Apply restored parameters to materials, GUI, and other components
+function applyRestoredParams() {
+    // Apply background color
+    if (params.backgroundColor) {
+        renderer.setClearColor(params.backgroundColor);
+    }
+    
+    // Apply point size and opacity to current material if exists
+    if (pointCloud && currentMaterial) {
+        if (!params.useShaderMaterial && currentMaterial.size !== undefined) {
+            currentMaterial.size = params.pointSize;
+            currentMaterial.opacity = params.opacity;
+            currentMaterial.transparent = params.opacity < 1;
+        } else if (currentMaterial.uniforms) {
+            if (currentMaterial.uniforms.uPointSize) {
+                currentMaterial.uniforms.uPointSize.value = params.pointSize * 100.0;
+            }
+            if (currentMaterial.uniforms.uOpacity) {
+                currentMaterial.uniforms.uOpacity.value = params.opacity;
+            }
+        }
+    }
+    
+    // Apply color mode and custom color if needed
+    if (pointCloud && currentMaterial) {
+        if (params.colorMode === 'custom') {
+            if (!params.useShaderMaterial) {
+                currentMaterial.vertexColors = false;
+                currentMaterial.color.set(params.customColor);
+            } else if (currentMaterial.uniforms && currentMaterial.uniforms.uColor) {
+                currentMaterial.uniforms.uColor.value = new THREE.Color(params.customColor);
+            }
+        } else if (params.colorMode === 'file') {
+            const hasColors = pointCloud.geometry.attributes.color !== undefined;
+            if (!params.useShaderMaterial) {
+                currentMaterial.vertexColors = hasColors;
+                currentMaterial.color.set(0xffffff);
+            }
+        }
+    }
+    
+    // Apply animation if waves are enabled
+    if (params.wavesEnabled && params.animation !== 'spherical_waves') {
+        params.animation = 'spherical_waves';
+        currentAnimation = 'spherical_waves';
+        if (pointCloud) {
+            applyAnimation('spherical_waves');
+        }
+    } else if (!params.wavesEnabled && params.animation === 'spherical_waves') {
+        params.animation = 'none';
+        currentAnimation = 'none';
+        if (pointCloud) {
+            applyAnimation('none');
+        }
+    }
+}
+
 // Load list of available models from server
 async function loadModelsList() {
     console.log('🔵 [DEBUG] loadModelsList() called');
@@ -2322,6 +2379,8 @@ async function initializeApp() {
     const hasURLParams = deserializeParamsFromURL();
     if (hasURLParams) {
         console.log('🟢 [DEBUG] Parameters restored from URL');
+        // Apply restored parameters immediately
+        applyRestoredParams();
     }
     
     // Initialize GUI first (with empty scenes list)
