@@ -89,7 +89,9 @@ const params = {
     wavesAmplitude: 5.0, // Wave amplitude (1-10) - affects Z displacement
     wavesPeriod: 5.0, // Period between waves (1-10)
     wavesSpeed: 5.0, // Wave propagation speed (1-10)
-    wavesColor: '#00ccff' // Wave color (cyan/blue by default)
+    wavesColor: '#00ccff', // Wave color (cyan/blue by default)
+    wavesDisplacementAxis: 'z', // Displacement axis: 'x', 'y', or 'z'
+    wavesDisplacement: 5.0 // Displacement amount (0-10) in conditional units
 };
 
 // Initialize GUI
@@ -1237,6 +1239,23 @@ function initGUI() {
         }
     });
     
+    // Displacement axis control
+    const wavesDisplacementAxisCtrl = animFolder.add(params, 'wavesDisplacementAxis', ['x', 'y', 'z']).name('Displacement Axis');
+    wavesDisplacementAxisCtrl.onChange((value) => {
+        if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uDisplacementAxis) {
+            const axisValue = value === 'x' ? 0 : (value === 'y' ? 1 : 2);
+            pointCloud.material.uniforms.uDisplacementAxis.value = axisValue;
+        }
+    });
+    
+    // Displacement amount control (0-10)
+    const wavesDisplacementCtrl = animFolder.add(params, 'wavesDisplacement', 0, 10, 0.1).name('Displacement');
+    wavesDisplacementCtrl.onChange((value) => {
+        if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uDisplacement) {
+            pointCloud.material.uniforms.uDisplacement.value = value;
+        }
+    });
+    
     animFolder.open();
     
 }
@@ -1464,6 +1483,9 @@ function applyAnimation(type) {
         // Wave color uniform
         const waveColor = new THREE.Color(params.wavesColor);
         uniforms.uWaveColor = { value: waveColor };
+        // Displacement settings
+        uniforms.uDisplacementAxis = { value: params.wavesDisplacementAxis === 'x' ? 0 : (params.wavesDisplacementAxis === 'y' ? 1 : 2) }; // 0=x, 1=y, 2=z
+        uniforms.uDisplacement = { value: params.wavesDisplacement };
     }
     
     
@@ -1737,6 +1759,8 @@ function getVertexShader(type, hasColors = true) {
             uniform float uWavesAmplitude;
             uniform float uWavePeriod;
             uniform float uWavesSpeed;
+            uniform float uDisplacementAxis; // 0=x, 1=y, 2=z
+            uniform float uDisplacement; // Displacement amount (0-10)
             
             void main() {
                 // Calculate distance from center (local coordinates 0,0,0)
@@ -1771,16 +1795,25 @@ function getVertexShader(type, hasColors = true) {
                 // Base color (will be modified in fragment shader)
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
                 
-                // Displace particles along Z axis based on wave intensity and amplitude
-                // Normalize amplitude: map from 1-10 to actual displacement (0.1 to 1.0 units)
-                float normalizedAmplitude = uWavesAmplitude * 0.1;
+                // Displace particles along selected axis based on wave intensity and displacement amount
+                // Normalize displacement: map from 0-10 to actual displacement (0.0 to 1.0 units)
+                float normalizedDisplacement = uDisplacement * 0.1;
                 
-                // Calculate Z displacement: particles move forward (positive Z) when wave passes
-                float zDisplacement = intensity * normalizedAmplitude;
+                // Calculate displacement: particles move along selected axis when wave passes
+                float displacement = intensity * normalizedDisplacement;
                 
-                // Apply displacement to position
+                // Apply displacement to position based on selected axis
                 vec3 pos = position;
-                pos.z += zDisplacement;
+                if (uDisplacementAxis < 0.5) {
+                    // X axis (0)
+                    pos.x += displacement;
+                } else if (uDisplacementAxis < 1.5) {
+                    // Y axis (1)
+                    pos.y += displacement;
+                } else {
+                    // Z axis (2)
+                    pos.z += displacement;
+                }
                 
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
                 gl_PointSize = 3.0;
@@ -1856,6 +1889,13 @@ function animate() {
             if (pointCloud.material.uniforms.uWaveColor) {
                 const waveColor = new THREE.Color(params.wavesColor);
                 pointCloud.material.uniforms.uWaveColor.value = waveColor;
+            }
+            if (pointCloud.material.uniforms.uDisplacementAxis) {
+                const axisValue = params.wavesDisplacementAxis === 'x' ? 0 : (params.wavesDisplacementAxis === 'y' ? 1 : 2);
+                pointCloud.material.uniforms.uDisplacementAxis.value = axisValue;
+            }
+            if (pointCloud.material.uniforms.uDisplacement) {
+                pointCloud.material.uniforms.uDisplacement.value = params.wavesDisplacement;
             }
         } else {
             // Only update animation time if playing (for other animations)
