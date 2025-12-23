@@ -1826,22 +1826,23 @@ function getVertexShader(type, hasColors = true) {
                 float distance = length(offsetFromCenter);
                 
                 // Adaptive speed calculation: scale speed based on scene size
-                // Use logarithmic scaling for smoother adaptation
+                // Use square root scaling for smoother adaptation across different scene sizes
                 // Base reference size: 10 units (for scenes of this size, speed is as specified)
                 float baseReferenceSize = 10.0;
                 float maxDist = max(uMaxDistance, 1.0);
                 
-                // Use logarithmic scaling: log(maxDist / baseReferenceSize) + 1.0
-                // This provides smoother speed adaptation:
-                // - Small scenes (< 10): slightly faster
-                // - Medium scenes (10-100): similar speed
-                // - Large scenes (> 100): slightly slower, but not too much
-                float logScale = log(maxDist / baseReferenceSize) / log(2.0) + 1.0;
+                // Calculate scale factor using square root for smoother adaptation
+                // This provides better balance:
+                // - Small scenes (< 10): slightly faster (sqrt(0.1) ≈ 0.32, so speed increases ~3x)
+                // - Medium scenes (10-100): similar speed (sqrt(1.0) = 1.0, speed as specified)
+                // - Large scenes (> 100): moderately slower (sqrt(10) ≈ 3.16, so speed decreases ~3x)
+                float sizeRatio = maxDist / baseReferenceSize;
+                float scaleFactor = 1.0 / sqrt(max(sizeRatio, 0.1)); // Inverse square root for speed scaling
                 
                 // Normalize wave speed: map from 1-10 to actual speed
-                // Base speed is 2.0 units/second, scaled by logarithmic factor
-                // For reference size (10 units): logScale ≈ 1.0, speed = uWavesSpeed * 2.0
-                float normalizedSpeed = uWavesSpeed * 2.0 / max(logScale, 0.5);
+                // Base speed is 2.0 units/second, scaled by square root factor
+                // For reference size (10 units): scaleFactor = 1.0, speed = uWavesSpeed * 2.0
+                float normalizedSpeed = uWavesSpeed * 2.0 * scaleFactor;
                 
                 // Calculate wave interval: how far apart waves start (in distance units)
                 // More waves (higher period) = smaller interval between wave starts
