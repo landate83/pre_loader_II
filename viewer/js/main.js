@@ -1798,8 +1798,16 @@ function getVertexShader(type, hasColors = true) {
                 vec3 offsetFromCenter = position - uCenter;
                 float distance = length(offsetFromCenter);
                 
-                // Normalize wave speed: map from 1-10 to actual speed (2.0 to 20.0 units per second)
-                float normalizedSpeed = uWavesSpeed * 2.0;
+                // Adaptive speed calculation: scale speed based on scene size
+                // Base reference size: 10 units (for scenes of this size, speed is as specified)
+                // For larger scenes, speed is automatically reduced proportionally
+                float baseReferenceSize = 10.0;
+                float scaleFactor = baseReferenceSize / max(uMaxDistance, 1.0);
+                
+                // Normalize wave speed: map from 1-10 to actual speed, scaled by scene size
+                // For small scenes (uMaxDistance < 10): speed increases
+                // For large scenes (uMaxDistance > 10): speed decreases proportionally
+                float normalizedSpeed = uWavesSpeed * 2.0 * scaleFactor;
                 
                 // Calculate wave interval: how far apart waves start (in distance units)
                 // More waves (higher period) = smaller interval between wave starts
