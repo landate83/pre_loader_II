@@ -2182,12 +2182,21 @@ async function copyToClipboard(text) {
 function showNotification(message, type = 'success') {
     // Create notification element
     const notification = document.createElement('div');
+    
+    // Determine background color based on type
+    let bgColor = '#4ecdc4'; // default success color
+    if (type === 'error') {
+        bgColor = '#ff6b6b';
+    } else if (type === 'info') {
+        bgColor = '#4a90e2';
+    }
+    
     notification.style.cssText = `
         position: fixed;
         top: 20px;
         left: 50%;
         transform: translateX(-50%);
-        background: ${type === 'success' ? '#4ecdc4' : '#ff6b6b'};
+        background: ${bgColor};
         color: #1a1a2e;
         padding: 12px 24px;
         border-radius: 8px;
