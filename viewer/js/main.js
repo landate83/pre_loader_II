@@ -1059,6 +1059,9 @@ function initGUI() {
     // Load custom file button
     sceneFolder.add(params, 'loadCustomFile').name('Load Custom File');
     
+    // Share button
+    sceneFolder.add(params, 'shareCurrentView').name('Share');
+    
     // Drag & Drop area in panel (we'll add this via HTML/CSS)
     sceneFolder.open();
     
