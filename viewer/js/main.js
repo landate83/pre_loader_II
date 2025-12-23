@@ -89,7 +89,7 @@ const params = {
     wavesAmplitude: 3.0, // Wave width (1-10) - how many points will be affected by wave
     wavesPeriod: 1.0, // Number of simultaneous waves (1-10) - how often waves are generated
     wavesSpeed: 3.0, // Wave propagation speed (1-10) - how fast waves travel
-    wavesColor: '#00ccff', // Wave color (cyan/blue by default)
+    wavesColor: '#ffffff', // Wave color (white by default)
     wavesDisplacementAxis: 'y', // Displacement axis: 'x', 'y', or 'z'
     wavesDisplacement: 1.0 // Displacement amount (0-10) in conditional units
 };
