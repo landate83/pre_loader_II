@@ -131,6 +131,16 @@ fileInput.addEventListener('change', (e) => {
 
 // Load file from URL
 async function loadFileFromURL(url, filename) {
+    // Remove old point cloud immediately before loading new one
+    if (pointCloud) {
+        console.log('🟡 [DEBUG] Removing old point cloud before loading new file from URL...');
+        scene.remove(pointCloud);
+        if (pointCloud.geometry) pointCloud.geometry.dispose();
+        if (pointCloud.material) pointCloud.material.dispose();
+        pointCloud = null;
+        currentMaterial = null;
+    }
+    
     try {
         const response = await fetch(url);
         if (!response.ok) {
@@ -963,6 +973,17 @@ function initGUI() {
     selectedSceneCtrl = sceneFolder.add(params, 'selectedScene', defaultScenes).name('Default Scene');
     selectedSceneCtrl.onChange((value) => {
         if (!value || !defaultScenes.includes(value)) return;
+        
+        // Remove old point cloud immediately before loading new one
+        if (pointCloud) {
+            console.log('🟡 [DEBUG] Removing old point cloud before loading new model...');
+            scene.remove(pointCloud);
+            if (pointCloud.geometry) pointCloud.geometry.dispose();
+            if (pointCloud.material) pointCloud.material.dispose();
+            pointCloud = null;
+            currentMaterial = null;
+        }
+        
         // Update URL parameter
         updateURLParameter('model', value);
         // Load the file
