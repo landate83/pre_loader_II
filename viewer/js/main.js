@@ -1961,6 +1961,9 @@ function animate() {
                 const waveColor = new THREE.Color(params.wavesColor);
                 pointCloud.material.uniforms.uWaveColor.value = waveColor;
             }
+            if (pointCloud.material.uniforms.uWaveColorIntensity) {
+                pointCloud.material.uniforms.uWaveColorIntensity.value = params.wavesColorIntensity;
+            }
             if (pointCloud.material.uniforms.uDisplacementAxis) {
                 const axisValue = params.wavesDisplacementAxis === 'x' ? 0 : (params.wavesDisplacementAxis === 'y' ? 1 : 2);
                 pointCloud.material.uniforms.uDisplacementAxis.value = axisValue;
