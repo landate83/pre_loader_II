@@ -31,6 +31,16 @@ const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
 
+// Update URL when camera position changes (debounced)
+controls.addEventListener('change', () => {
+    if (cameraUpdateTimeout) {
+        clearTimeout(cameraUpdateTimeout);
+    }
+    cameraUpdateTimeout = setTimeout(() => {
+        serializeParamsToURL();
+    }, CAMERA_UPDATE_DELAY);
+});
+
 // Handle window resize
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -2056,14 +2066,6 @@ function animate() {
     }
     
     controls.update();
-    
-    // Debounced camera position update for URL
-    if (cameraUpdateTimeout) {
-        clearTimeout(cameraUpdateTimeout);
-    }
-    cameraUpdateTimeout = setTimeout(() => {
-        serializeParamsToURL();
-    }, CAMERA_UPDATE_DELAY);
     
     renderer.render(scene, camera);
 }
