@@ -86,9 +86,9 @@ const params = {
     },
     // Spherical Waves Animation
     wavesEnabled: false, // Enable/disable spherical waves
-    wavesAmplitude: 5.0, // Wave amplitude (1-10) - affects Z displacement
-    wavesPeriod: 5.0, // Period between waves (1-10)
-    wavesSpeed: 5.0, // Wave propagation speed (1-10)
+    wavesAmplitude: 5.0, // Wave width (1-10) - how many points will be affected by wave
+    wavesPeriod: 5.0, // Number of simultaneous waves (1-10) - how often waves are generated
+    wavesSpeed: 5.0, // Wave propagation speed (1-10) - how fast waves travel
     wavesColor: '#00ccff', // Wave color (cyan/blue by default)
     wavesDisplacementAxis: 'z', // Displacement axis: 'x', 'y', or 'z'
     wavesDisplacement: 5.0 // Displacement amount (0-10) in conditional units
@@ -1206,23 +1206,23 @@ function initGUI() {
         }
     });
     
-    // Wave amplitude control (1-10)
-    const wavesAmplitudeCtrl = animFolder.add(params, 'wavesAmplitude', 1, 10, 0.1).name('Wave Amplitude');
+    // Wave amplitude control (1-10) - controls wave width
+    const wavesAmplitudeCtrl = animFolder.add(params, 'wavesAmplitude', 1, 10, 0.1).name('Wave Width');
     wavesAmplitudeCtrl.onChange((value) => {
         if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavesAmplitude) {
             pointCloud.material.uniforms.uWavesAmplitude.value = value;
         }
     });
     
-    // Wave period control (1-10)
-    const wavesPeriodCtrl = animFolder.add(params, 'wavesPeriod', 1, 10, 0.1).name('Wave Period');
+    // Wave period control (1-10) - number of simultaneous waves
+    const wavesPeriodCtrl = animFolder.add(params, 'wavesPeriod', 1, 10, 0.1).name('Wave Count');
     wavesPeriodCtrl.onChange((value) => {
         if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavePeriod) {
             pointCloud.material.uniforms.uWavePeriod.value = value;
         }
     });
     
-    // Wave speed control (1-10)
+    // Wave speed control (1-10) - propagation speed
     const wavesSpeedCtrl = animFolder.add(params, 'wavesSpeed', 1, 10, 0.1).name('Wave Speed');
     wavesSpeedCtrl.onChange((value) => {
         if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavesSpeed) {
@@ -1476,10 +1476,14 @@ function applyAnimation(type) {
         geometry.computeBoundingBox();
         const box = geometry.boundingBox;
         const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const maxDistance = Math.max(size.x, size.y, size.z) * 0.5; // Maximum distance from center
+        
         uniforms.uCenter = { value: center };
         uniforms.uWavesAmplitude = { value: params.wavesAmplitude };
         uniforms.uWavePeriod = { value: params.wavesPeriod };
         uniforms.uWavesSpeed = { value: params.wavesSpeed };
+        uniforms.uMaxDistance = { value: maxDistance }; // Maximum distance for calculating wave intervals
         // Wave color uniform
         const waveColor = new THREE.Color(params.wavesColor);
         uniforms.uWaveColor = { value: waveColor };
@@ -1756,9 +1760,10 @@ function getVertexShader(type, hasColors = true) {
     } else if (type === 'spherical_waves') {
         animationCode = `
             uniform vec3 uCenter;
-            uniform float uWavesAmplitude;
-            uniform float uWavePeriod;
-            uniform float uWavesSpeed;
+            uniform float uWavesAmplitude; // Wave width (1-10) - controls how many points are affected
+            uniform float uWavePeriod; // Number of simultaneous waves (1-10)
+            uniform float uWavesSpeed; // Wave propagation speed (1-10)
+            uniform float uMaxDistance; // Maximum distance from center
             uniform float uDisplacementAxis; // 0=x, 1=y, 2=z
             uniform float uDisplacement; // Displacement amount (0-10)
             
@@ -1767,23 +1772,30 @@ function getVertexShader(type, hasColors = true) {
                 vec3 offsetFromCenter = position - uCenter;
                 float distance = length(offsetFromCenter);
                 
-                // Normalize wave period: map from 1-10 to actual time period
-                // Higher period = longer time between waves
-                float normalizedPeriod = uWavePeriod * 0.5; // 0.5 to 5.0 seconds
+                // Normalize wave speed: map from 1-10 to actual speed (2.0 to 20.0 units per second)
+                float normalizedSpeed = uWavesSpeed * 2.0;
                 
-                // Normalize wave speed: map from 1-10 to actual speed
-                // Higher speed = faster wave propagation
-                float normalizedSpeed = uWavesSpeed * 2.0; // 2.0 to 20.0 units per second
+                // Calculate wave interval: how far apart waves start
+                // More waves (higher period) = smaller interval between wave starts
+                // If period = 5, we want 5 waves, so interval = maxDistance / 5
+                float waveInterval = uMaxDistance / max(uWavePeriod, 1.0);
                 
-                // Calculate wave phase: time-based wave position
-                // Use modulo to create infinite repeating waves
-                float wavePhase = mod(uTime * normalizedSpeed, normalizedPeriod * normalizedSpeed);
+                // Calculate which wave this point might be affected by
+                // Each wave starts at a different distance from center
+                float waveIndex = floor(distance / waveInterval);
+                float waveStartDistance = waveIndex * waveInterval;
+                
+                // Calculate current position of this wave front
+                // Wave travels from center outward at normalizedSpeed
+                float wavePhase = mod(uTime * normalizedSpeed, waveInterval);
                 
                 // Calculate distance from current wave front
-                float distFromWave = abs(distance - wavePhase);
+                float distFromWave = abs(distance - (waveStartDistance + wavePhase));
                 
-                // Wave width: how thick the wave is (in world units)
-                float waveWidth = normalizedPeriod * normalizedSpeed * 0.3;
+                // Wave width: controlled by amplitude (1-10)
+                // Normalize amplitude: map from 1-10 to wave width (0.05 to 0.5 of maxDistance)
+                float normalizedAmplitude = uWavesAmplitude * 0.05; // 0.05 to 0.5
+                float waveWidth = uMaxDistance * normalizedAmplitude;
                 
                 // Calculate wave intensity using smoothstep for smooth edges
                 // Intensity is 1.0 at wave front, 0.0 away from wave
