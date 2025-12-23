@@ -2113,10 +2113,10 @@ function animate() {
 
 // ==================== URL Shortening and Sharing ====================
 
-// Shorten URL using TinyURL API
+// Shorten URL using v.gd API
 async function shortenURL(longURL) {
     try {
-        const apiURL = `https://tinyurl.com/api-create.php?url=${encodeURIComponent(longURL)}`;
+        const apiURL = `https://v.gd/create.php?format=json&url=${encodeURIComponent(longURL)}`;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
         
@@ -2131,13 +2131,13 @@ async function shortenURL(longURL) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         
-        const shortURL = await response.text();
+        const data = await response.json();
         
-        // TinyURL returns the short URL or an error message
-        if (shortURL.startsWith('http')) {
-            return shortURL.trim();
+        // v.gd returns JSON with 'shorturl' field
+        if (data.shorturl && data.shorturl.startsWith('http')) {
+            return data.shorturl.trim();
         } else {
-            throw new Error('Invalid response from TinyURL');
+            throw new Error('Invalid response from v.gd: ' + (data.errormessage || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error shortening URL:', error);
