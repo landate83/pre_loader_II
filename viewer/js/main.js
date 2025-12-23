@@ -83,7 +83,12 @@ const params = {
     playAnimation: () => {
         animationTime = 0;
         isAnimationPlaying = true;
-    }
+    },
+    // Spherical Waves Animation
+    wavesEnabled: false, // Enable/disable spherical waves
+    wavesAmplitude: 5.0, // Wave amplitude (1-10)
+    wavesPeriod: 5.0, // Period between waves (1-10)
+    wavesSpeed: 5.0 // Wave propagation speed (1-10)
 };
 
 // Initialize GUI
@@ -934,7 +939,14 @@ function createPointCloud(positionAttr, colorAttr) {
     
     // Apply current animation (but preserve vertexColors if colors exist)
     const savedHasColors = hasColors;
-    applyAnimation(params.animation);
+    
+    // Auto-enable spherical waves if enabled in params
+    if (params.wavesEnabled) {
+        params.animation = 'spherical_waves';
+        currentAnimation = 'spherical_waves';
+    }
+    
+    applyAnimation(currentAnimation);
     currentAnimation = params.animation;
     
     // After applying animation, restore vertexColors if needed
@@ -1174,6 +1186,52 @@ function initGUI() {
     });
     displayFolder.open();
     
+    // Animation folder - Spherical Waves
+    const animFolder = gui.addFolder('Animation');
+    
+    // Enable/disable waves checkbox
+    const wavesEnabledCtrl = animFolder.add(params, 'wavesEnabled').name('Enable Waves');
+    wavesEnabledCtrl.onChange((value) => {
+        if (pointCloud) {
+            if (value) {
+                // Enable waves animation
+                params.animation = 'spherical_waves';
+                currentAnimation = 'spherical_waves';
+            } else {
+                // Disable waves, return to none
+                params.animation = 'none';
+                currentAnimation = 'none';
+            }
+            applyAnimation(currentAnimation);
+        }
+    });
+    
+    // Wave amplitude control (1-10)
+    const wavesAmplitudeCtrl = animFolder.add(params, 'wavesAmplitude', 1, 10, 0.1).name('Wave Amplitude');
+    wavesAmplitudeCtrl.onChange((value) => {
+        if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavesAmplitude) {
+            pointCloud.material.uniforms.uWavesAmplitude.value = value;
+        }
+    });
+    
+    // Wave period control (1-10)
+    const wavesPeriodCtrl = animFolder.add(params, 'wavesPeriod', 1, 10, 0.1).name('Wave Period');
+    wavesPeriodCtrl.onChange((value) => {
+        if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavePeriod) {
+            pointCloud.material.uniforms.uWavePeriod.value = value;
+        }
+    });
+    
+    // Wave speed control (1-10)
+    const wavesSpeedCtrl = animFolder.add(params, 'wavesSpeed', 1, 10, 0.1).name('Wave Speed');
+    wavesSpeedCtrl.onChange((value) => {
+        if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavesSpeed) {
+            pointCloud.material.uniforms.uWavesSpeed.value = value;
+        }
+    });
+    
+    animFolder.open();
+    
 }
 
 // Apply animation
@@ -1299,25 +1357,80 @@ function applyAnimation(type) {
     });
     
     let vertexShader = getVertexShader(type, useVertexColors);
-    const fragmentShader = useVertexColors ? `
-        precision highp float;
-        varying vec3 vColor;
-        void main() {
-            float dist = length(gl_PointCoord - vec2(0.5));
-            if (dist > 0.5) discard;
-            float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
-            gl_FragColor = vec4(vColor, alpha);
-        }
-    ` : `
-        precision highp float;
-        uniform vec3 uColor;
-        void main() {
-            float dist = length(gl_PointCoord - vec2(0.5));
-            if (dist > 0.5) discard;
-            float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
-            gl_FragColor = vec4(uColor, alpha);
-        }
-    `;
+    
+    // Special fragment shader for spherical waves with color interpolation
+    let fragmentShader;
+    if (type === 'spherical_waves') {
+        fragmentShader = useVertexColors ? `
+            precision highp float;
+            varying vec3 vColor;
+            varying float vWaveIntensity;
+            uniform float uWavesAmplitude;
+            
+            void main() {
+                // Point shape
+                float dist = length(gl_PointCoord - vec2(0.5));
+                if (dist > 0.5) discard;
+                float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                
+                // Wave color: bright cyan/blue for active wave
+                vec3 waveColor = vec3(0.0, 0.8, 1.0);
+                
+                // Normalize amplitude: map from 1-10 to color intensity multiplier
+                float colorIntensity = uWavesAmplitude * 0.1; // 0.1 to 1.0
+                
+                // Interpolate between base color and wave color based on intensity
+                vec3 finalColor = mix(vColor, waveColor * colorIntensity, vWaveIntensity);
+                
+                gl_FragColor = vec4(finalColor, alpha);
+            }
+        ` : `
+            precision highp float;
+            uniform vec3 uColor;
+            varying float vWaveIntensity;
+            uniform float uWavesAmplitude;
+            
+            void main() {
+                // Point shape
+                float dist = length(gl_PointCoord - vec2(0.5));
+                if (dist > 0.5) discard;
+                float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                
+                // Wave color: bright cyan/blue for active wave
+                vec3 waveColor = vec3(0.0, 0.8, 1.0);
+                
+                // Normalize amplitude: map from 1-10 to color intensity multiplier
+                float colorIntensity = uWavesAmplitude * 0.1; // 0.1 to 1.0
+                
+                // Interpolate between base color and wave color based on intensity
+                vec3 finalColor = mix(uColor, waveColor * colorIntensity, vWaveIntensity);
+                
+                gl_FragColor = vec4(finalColor, alpha);
+            }
+        `;
+    } else {
+        fragmentShader = useVertexColors ? `
+            precision highp float;
+            varying vec3 vColor;
+            varying float vWaveIntensity;
+            void main() {
+                float dist = length(gl_PointCoord - vec2(0.5));
+                if (dist > 0.5) discard;
+                float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                gl_FragColor = vec4(vColor, alpha);
+            }
+        ` : `
+            precision highp float;
+            uniform vec3 uColor;
+            varying float vWaveIntensity;
+            void main() {
+                float dist = length(gl_PointCoord - vec2(0.5));
+                if (dist > 0.5) discard;
+                float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                gl_FragColor = vec4(uColor, alpha);
+            }
+        `;
+    }
     
     const uniforms = {
         uTime: { value: 0 },
@@ -1344,6 +1457,15 @@ function applyAnimation(type) {
     } else if (type === 'morph') {
         uniforms.uNoiseScale = { value: 0.1 };
         uniforms.uNoiseAmplitude = { value: 2.0 };
+    } else if (type === 'spherical_waves') {
+        // Calculate model center (local coordinates 0,0,0 after centering)
+        geometry.computeBoundingBox();
+        const box = geometry.boundingBox;
+        const center = box.getCenter(new THREE.Vector3());
+        uniforms.uCenter = { value: center };
+        uniforms.uWavesAmplitude = { value: params.wavesAmplitude };
+        uniforms.uWavePeriod = { value: params.wavesPeriod };
+        uniforms.uWavesSpeed = { value: params.wavesSpeed };
     }
     
     
@@ -1388,6 +1510,7 @@ function getVertexShader(type, hasColors = true) {
         uniform float uAmplitude;
         uniform float uSpeed;
         varying vec3 vColor;
+        varying float vWaveIntensity;
         
         float hash(float n) {
             return fract(sin(n) * 43758.5453);
@@ -1492,6 +1615,7 @@ function getVertexShader(type, hasColors = true) {
         animationCode = `
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                vWaveIntensity = 0.0; // No wave intensity for 'none' animation
                 vec3 pos = position;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
                 gl_PointSize = 3.0;
@@ -1502,6 +1626,7 @@ function getVertexShader(type, hasColors = true) {
             uniform float uDropHeight;
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                vWaveIntensity = 0.0;
                 float delay = fract(hash(float(gl_VertexID)) * uDuration * 0.5);
                 float t = clamp((uTime * uSpeed - delay) / uDuration, 0.0, 1.0);
                 vec3 start = vec3(position.x, position.y + uDropHeight, position.z);
@@ -1514,6 +1639,7 @@ function getVertexShader(type, hasColors = true) {
         animationCode = `
             uniform float uFrequency;
             void main() {
+                vWaveIntensity = 0.0;
                 float dist = length(position.xz);
                 float t = clamp((uTime * uSpeed - dist * 0.3) / uDuration, 0.0, 1.0);
                 float wave = sin(dist * uFrequency - uTime * uSpeed * 2.0) * uAmplitude * t;
@@ -1559,6 +1685,7 @@ function getVertexShader(type, hasColors = true) {
             uniform float uRotationSpeed;
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                vWaveIntensity = 0.0;
                 float delay = fract(hash(float(gl_VertexID)) * uDuration * 0.5);
                 float t = clamp((uTime * uSpeed - delay) / uDuration, 0.0, 1.0);
                 float progress = smoothstep(0.0, 1.0, t);
@@ -1576,6 +1703,7 @@ function getVertexShader(type, hasColors = true) {
             uniform float uExplosionRadius;
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                vWaveIntensity = 0.0;
                 float delay = fract(hash(float(gl_VertexID)) * uDuration * 0.5);
                 float t = clamp((uTime * uSpeed - delay) / uDuration, 0.0, 1.0);
                 vec3 dir = normalize(position - uCenter);
@@ -1591,6 +1719,7 @@ function getVertexShader(type, hasColors = true) {
             uniform float uNoiseAmplitude;
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                vWaveIntensity = 0.0;
                 float delay = fract(hash(float(gl_VertexID)) * uDuration * 0.5);
                 float t = clamp((uTime * uSpeed - delay) / uDuration, 0.0, 1.0);
                 float progress = smoothstep(0.0, 1.0, t);
@@ -1600,6 +1729,53 @@ function getVertexShader(type, hasColors = true) {
                     snoise(position * uNoiseScale + uTime * uSpeed * 0.5 + vec3(200.0))
                 );
                 vec3 pos = mix(position + noise * uNoiseAmplitude * uAmplitude, position, progress);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+                gl_PointSize = 3.0;
+            }
+        `;
+    } else if (type === 'spherical_waves') {
+        animationCode = `
+            uniform vec3 uCenter;
+            uniform float uWavesAmplitude;
+            uniform float uWavePeriod;
+            uniform float uWavesSpeed;
+            varying float vWaveIntensity;
+            
+            void main() {
+                // Calculate distance from center (local coordinates 0,0,0)
+                vec3 offsetFromCenter = position - uCenter;
+                float distance = length(offsetFromCenter);
+                
+                // Normalize wave period: map from 1-10 to actual time period
+                // Higher period = longer time between waves
+                float normalizedPeriod = uWavePeriod * 0.5; // 0.5 to 5.0 seconds
+                
+                // Normalize wave speed: map from 1-10 to actual speed
+                // Higher speed = faster wave propagation
+                float normalizedSpeed = uWavesSpeed * 2.0; // 2.0 to 20.0 units per second
+                
+                // Calculate wave phase: time-based wave position
+                // Use modulo to create infinite repeating waves
+                float wavePhase = mod(uTime * normalizedSpeed, normalizedPeriod * normalizedSpeed);
+                
+                // Calculate distance from current wave front
+                float distFromWave = abs(distance - wavePhase);
+                
+                // Wave width: how thick the wave is (in world units)
+                float waveWidth = normalizedPeriod * normalizedSpeed * 0.3;
+                
+                // Calculate wave intensity using smoothstep for smooth edges
+                // Intensity is 1.0 at wave front, 0.0 away from wave
+                float intensity = 1.0 - smoothstep(0.0, waveWidth, distFromWave);
+                
+                // Store intensity for fragment shader
+                vWaveIntensity = intensity;
+                
+                // Base color (will be modified in fragment shader)
+                vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                
+                // Position remains unchanged (waves affect color, not position)
+                vec3 pos = position;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
                 gl_PointSize = 3.0;
             }
@@ -1657,31 +1833,47 @@ function animate() {
     
     
     if (currentAnimation !== 'none' && pointCloud && pointCloud.material && pointCloud.material.uniforms) {
-        // Only update animation time if playing
-        if (isAnimationPlaying || params.animRepeat) {
-            animationTime += 0.016 * params.animSpeed; // ~60fps
+        // Update animation time for spherical waves (continuous, no duration limit)
+        if (currentAnimation === 'spherical_waves' && params.wavesEnabled) {
+            animationTime += 0.016; // Always increment for continuous waves
             pointCloud.material.uniforms.uTime.value = animationTime;
-            pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
-            pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
-            
-            const duration = pointCloud.material.uniforms.uDuration.value * 2;
-            
-            // Check if animation completed
-            if (animationTime > duration) {
-                if (params.animRepeat) {
-                    // Auto-repeat: reset time
-                    animationTime = 0;
-                } else {
-                    // No repeat: stop at the end
-                    animationTime = duration;
-                    isAnimationPlaying = false;
-                }
+            // Update wave parameters if they exist
+            if (pointCloud.material.uniforms.uWavesAmplitude) {
+                pointCloud.material.uniforms.uWavesAmplitude.value = params.wavesAmplitude;
+            }
+            if (pointCloud.material.uniforms.uWavePeriod) {
+                pointCloud.material.uniforms.uWavePeriod.value = params.wavesPeriod;
+            }
+            if (pointCloud.material.uniforms.uWavesSpeed) {
+                pointCloud.material.uniforms.uWavesSpeed.value = params.wavesSpeed;
             }
         } else {
-            // Animation is paused, but still update uniforms for current time
-            pointCloud.material.uniforms.uTime.value = animationTime;
-            pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
-            pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
+            // Only update animation time if playing (for other animations)
+            if (isAnimationPlaying || params.animRepeat) {
+                animationTime += 0.016 * params.animSpeed; // ~60fps
+                pointCloud.material.uniforms.uTime.value = animationTime;
+                pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
+                pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
+                
+                const duration = pointCloud.material.uniforms.uDuration.value * 2;
+                
+                // Check if animation completed
+                if (animationTime > duration) {
+                    if (params.animRepeat) {
+                        // Auto-repeat: reset time
+                        animationTime = 0;
+                    } else {
+                        // No repeat: stop at the end
+                        animationTime = duration;
+                        isAnimationPlaying = false;
+                    }
+                }
+            } else {
+                // Animation is paused, but still update uniforms for current time
+                pointCloud.material.uniforms.uTime.value = animationTime;
+                pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
+                pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
+            }
         }
     }
     
