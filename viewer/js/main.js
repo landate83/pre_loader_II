@@ -1826,15 +1826,22 @@ function getVertexShader(type, hasColors = true) {
                 float distance = length(offsetFromCenter);
                 
                 // Adaptive speed calculation: scale speed based on scene size
+                // Use logarithmic scaling for smoother adaptation
                 // Base reference size: 10 units (for scenes of this size, speed is as specified)
-                // For larger scenes, speed is automatically reduced proportionally
                 float baseReferenceSize = 10.0;
-                float scaleFactor = baseReferenceSize / max(uMaxDistance, 1.0);
+                float maxDist = max(uMaxDistance, 1.0);
                 
-                // Normalize wave speed: map from 1-10 to actual speed, scaled by scene size
-                // For small scenes (uMaxDistance < 10): speed increases
-                // For large scenes (uMaxDistance > 10): speed decreases proportionally
-                float normalizedSpeed = uWavesSpeed * 2.0 * scaleFactor;
+                // Use logarithmic scaling: log(maxDist / baseReferenceSize) + 1.0
+                // This provides smoother speed adaptation:
+                // - Small scenes (< 10): slightly faster
+                // - Medium scenes (10-100): similar speed
+                // - Large scenes (> 100): slightly slower, but not too much
+                float logScale = log(maxDist / baseReferenceSize) / log(2.0) + 1.0;
+                
+                // Normalize wave speed: map from 1-10 to actual speed
+                // Base speed is 2.0 units/second, scaled by logarithmic factor
+                // For reference size (10 units): logScale ≈ 1.0, speed = uWavesSpeed * 2.0
+                float normalizedSpeed = uWavesSpeed * 2.0 / max(logScale, 0.5);
                 
                 // Calculate wave interval: how far apart waves start (in distance units)
                 // More waves (higher period) = smaller interval between wave starts
