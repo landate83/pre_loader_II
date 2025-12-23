@@ -1690,26 +1690,52 @@ function updateURLParameter(name, value) {
 
 // Load list of available models from server
 async function loadModelsList() {
+    console.log('🔵 [DEBUG] loadModelsList() called');
+    console.log('🔵 [DEBUG] Current defaultScenes:', defaultScenes);
+    
     try {
         // Try to fetch from API endpoint
         const apiUrl = '/api/models';
+        console.log('🔵 [DEBUG] Fetching from API:', apiUrl);
+        console.log('🔵 [DEBUG] Full URL:', window.location.origin + apiUrl);
+        
         const response = await fetch(apiUrl);
+        console.log('🔵 [DEBUG] Response status:', response.status, response.statusText);
+        console.log('🔵 [DEBUG] Response ok:', response.ok);
+        console.log('🔵 [DEBUG] Response headers:', {
+            'content-type': response.headers.get('content-type'),
+            'access-control-allow-origin': response.headers.get('access-control-allow-origin')
+        });
         
         if (!response.ok) {
+            console.error('🔴 [ERROR] Response not OK:', response.status, response.statusText);
             throw new Error(`Failed to load models: ${response.statusText}`);
         }
         
         const data = await response.json();
+        console.log('🔵 [DEBUG] Parsed JSON data:', data);
+        console.log('🔵 [DEBUG] data.success:', data.success);
+        console.log('🔵 [DEBUG] data.models:', data.models);
+        console.log('🔵 [DEBUG] data.models is array:', Array.isArray(data.models));
+        console.log('🔵 [DEBUG] data.models length:', data.models ? data.models.length : 'null/undefined');
+        
         if (data.success && Array.isArray(data.models) && data.models.length > 0) {
             defaultScenes = data.models;
-            console.log('Loaded models from server:', defaultScenes);
+            console.log('✅ [SUCCESS] Loaded models from server:', defaultScenes);
+            console.log('✅ [SUCCESS] Total models:', defaultScenes.length);
             return true;
         } else {
+            console.warn('🟡 [WARNING] Invalid response format or empty models list');
+            console.warn('🟡 [WARNING] data.success:', data.success);
+            console.warn('🟡 [WARNING] data.models:', data.models);
             throw new Error('Invalid response format or empty models list');
         }
     } catch (error) {
-        console.error('Error loading models list from API:', error);
-        console.warn('Falling back to empty list. User can still load custom files.');
+        console.error('🔴 [ERROR] Error loading models list from API:', error);
+        console.error('🔴 [ERROR] Error name:', error.name);
+        console.error('🔴 [ERROR] Error message:', error.message);
+        console.error('🔴 [ERROR] Error stack:', error.stack);
+        console.warn('🟡 [WARNING] Falling back to empty list. User can still load custom files.');
         // Fallback to empty array - user can still load custom files
         defaultScenes = [];
         return false;
@@ -1732,45 +1758,76 @@ function loadSceneFromURL() {
 
 // Initialize application
 async function initializeApp() {
+    console.log('🟢 [DEBUG] ========== initializeApp() STARTED ==========');
+    console.log('🟢 [DEBUG] Current defaultScenes before init:', defaultScenes);
+    
     // Initialize GUI first (with empty scenes list)
+    console.log('🟢 [DEBUG] Calling initGUI()...');
     initGUI();
+    console.log('🟢 [DEBUG] initGUI() completed');
+    console.log('🟢 [DEBUG] selectedSceneCtrl after initGUI:', selectedSceneCtrl);
     
     // Load models list from server
+    console.log('🟢 [DEBUG] Calling loadModelsList()...');
     const modelsLoaded = await loadModelsList();
+    console.log('🟢 [DEBUG] loadModelsList() returned:', modelsLoaded);
+    console.log('🟢 [DEBUG] defaultScenes after loadModelsList:', defaultScenes);
+    console.log('🟢 [DEBUG] defaultScenes.length:', defaultScenes.length);
     
     if (modelsLoaded && defaultScenes.length > 0) {
+        console.log('✅ [SUCCESS] Models loaded successfully, updating GUI...');
         // Update GUI with loaded models
         if (selectedSceneCtrl) {
+            console.log('🟢 [DEBUG] Updating selectedSceneCtrl options...');
             // Update the controller options
             selectedSceneCtrl.options(defaultScenes);
+            console.log('🟢 [DEBUG] Options updated');
             
             // Set default scene
             params.selectedScene = defaultScenes[0];
+            console.log('🟢 [DEBUG] Set default scene to:', params.selectedScene);
             
             // Update display
             selectedSceneCtrl.updateDisplay();
+            console.log('🟢 [DEBUG] Display updated');
+        } else {
+            console.warn('🟡 [WARNING] selectedSceneCtrl is null, cannot update GUI');
         }
         
         // Try to load scene from URL parameter, otherwise load first default scene
+        console.log('🟢 [DEBUG] Checking URL parameters...');
         if (!loadSceneFromURL()) {
+            console.log('🟢 [DEBUG] No URL parameter, loading first default scene...');
             const firstScene = defaultScenes[0];
             params.selectedScene = firstScene;
             if (selectedSceneCtrl) {
                 selectedSceneCtrl.updateDisplay();
             }
             const url = `default_scenes/${firstScene}`;
+            console.log('🟢 [DEBUG] Loading scene from URL:', url);
             loadFileFromURL(url, firstScene);
+        } else {
+            console.log('🟢 [DEBUG] Scene loaded from URL parameter');
         }
     } else {
-        console.warn('No models available. User can still load custom files.');
+        console.warn('🟡 [WARNING] No models available. User can still load custom files.');
+        console.warn('🟡 [WARNING] modelsLoaded:', modelsLoaded);
+        console.warn('🟡 [WARNING] defaultScenes.length:', defaultScenes.length);
         // Hide or disable scene selector if no models
         if (selectedSceneCtrl) {
+            console.log('🟢 [DEBUG] Disabling scene selector...');
             selectedSceneCtrl.disable();
         }
     }
+    
+    console.log('🟢 [DEBUG] ========== initializeApp() COMPLETED ==========');
 }
 
 // Start application
+console.log('🚀 [DEBUG] ========== APPLICATION STARTING ==========');
+console.log('🚀 [DEBUG] Window location:', window.location.href);
+console.log('🚀 [DEBUG] Calling initializeApp()...');
 initializeApp();
+console.log('🚀 [DEBUG] initializeApp() called (async, may not be completed yet)');
 animate();
 
