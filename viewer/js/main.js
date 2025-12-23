@@ -2338,6 +2338,12 @@ function deserializeParamsFromURL() {
     const urlParams = new URLSearchParams(window.location.search);
     let hasParams = false;
     
+    // Deserialize model/scene parameter first
+    if (urlParams.has('model')) {
+        params.selectedScene = urlParams.get('model');
+        hasParams = true;
+    }
+    
     // Deserialize display parameters
     if (urlParams.has('pointSize')) {
         params.pointSize = parseFloat(urlParams.get('pointSize'));
