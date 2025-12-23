@@ -69,7 +69,7 @@ const params = {
     pointPercent: 100, // Percentage of points (0-100)
     estimatedFileSize: '—', // Estimated file size for current point count
     // Display
-    pointSize: 0.05,
+    pointSize: 0.03,
     opacity: 1,
     colorMode: 'file', // 'file' or 'custom'
     customColor: '#ff5500',
@@ -88,7 +88,7 @@ const params = {
     wavesEnabled: false, // Enable/disable spherical waves
     wavesAmplitude: 3.0, // Wave width (1-10) - how many points will be affected by wave
     wavesPeriod: 1.0, // Number of simultaneous waves (1-10) - how often waves are generated
-    wavesSpeed: 3.0, // Wave propagation speed (1-10) - how fast waves travel
+    wavesSpeed: 5.0, // Wave propagation speed (units per second) - how fast waves travel
     wavesColor: '#ffffff', // Wave color (white by default)
     wavesColorIntensity: 5.0, // Wave color intensity (0-10) - how pronounced the wave color is
     wavesDisplacementAxis: 'y', // Displacement axis: 'x', 'y', or 'z'
@@ -1227,8 +1227,8 @@ function initGUI() {
         }
     });
     
-    // Wave speed control (1-10) - propagation speed
-    const wavesSpeedCtrl = animFolder.add(params, 'wavesSpeed', 1, 10, 0.1).name('Wave Speed');
+    // Wave speed control (units per second) - propagation speed
+    const wavesSpeedCtrl = animFolder.add(params, 'wavesSpeed', 0.1, 50, 0.1).name('Wave Speed (units/s)');
     wavesSpeedCtrl.onChange((value) => {
         if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavesSpeed) {
             pointCloud.material.uniforms.uWavesSpeed.value = value;
@@ -1814,7 +1814,7 @@ function getVertexShader(type, hasColors = true) {
             uniform vec3 uCenter;
             uniform float uWavesAmplitude; // Wave width (1-10) - controls how many points are affected
             uniform float uWavePeriod; // Number of simultaneous waves (1-10)
-            uniform float uWavesSpeed; // Wave propagation speed (1-10)
+            uniform float uWavesSpeed; // Wave propagation speed (units per second)
             uniform float uMaxDistance; // Maximum distance from center
             uniform float uDisplacementAxis; // 0=x, 1=y, 2=z
             uniform float uDisplacement; // Displacement amount (0-10)
@@ -1825,24 +1825,9 @@ function getVertexShader(type, hasColors = true) {
                 vec3 offsetFromCenter = position - uCenter;
                 float distance = length(offsetFromCenter);
                 
-                // Adaptive speed calculation: scale speed based on scene size
-                // Use square root scaling for smoother adaptation across different scene sizes
-                // Base reference size: 10 units (for scenes of this size, speed is as specified)
-                float baseReferenceSize = 10.0;
-                float maxDist = max(uMaxDistance, 1.0);
-                
-                // Calculate scale factor using square root for smoother adaptation
-                // This provides better balance:
-                // - Small scenes (< 10): slightly faster (sqrt(0.1) ≈ 0.32, so speed increases ~3x)
-                // - Medium scenes (10-100): similar speed (sqrt(1.0) = 1.0, speed as specified)
-                // - Large scenes (> 100): moderately slower (sqrt(10) ≈ 3.16, so speed decreases ~3x)
-                float sizeRatio = maxDist / baseReferenceSize;
-                float scaleFactor = 1.0 / sqrt(max(sizeRatio, 0.1)); // Inverse square root for speed scaling
-                
-                // Normalize wave speed: map from 1-10 to actual speed
-                // Base speed is 2.0 units/second, scaled by square root factor
-                // For reference size (10 units): scaleFactor = 1.0, speed = uWavesSpeed * 2.0
-                float normalizedSpeed = uWavesSpeed * 2.0 * scaleFactor;
+                // Use absolute speed value directly (units per second)
+                // No adaptive scaling - user controls speed directly
+                float normalizedSpeed = uWavesSpeed;
                 
                 // Calculate wave interval: how far apart waves start (in distance units)
                 // More waves (higher period) = smaller interval between wave starts
