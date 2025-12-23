@@ -1066,19 +1066,27 @@ function initGUI() {
     // Use Shader Material - first in Display folder
     const useShaderCtrl = displayFolder.add(params, 'useShaderMaterial').name('Use Shader Material');
     
-    // Point Size and Opacity controls (will be disabled when shader material is enabled)
+    // Point Size and Opacity controls (work for both PointsMaterial and ShaderMaterial)
     const pointSizeCtrl = displayFolder.add(params, 'pointSize', 0.01, 0.2, 0.01).name('Point Size');
     pointSizeCtrl.onChange((value) => {
         if (currentMaterial && !params.useShaderMaterial) {
+            // For PointsMaterial
             currentMaterial.size = value;
+        } else if (currentMaterial && currentMaterial.uniforms && currentMaterial.uniforms.uPointSize) {
+            // For ShaderMaterial
+            currentMaterial.uniforms.uPointSize.value = value * 100.0;
         }
     });
     
     const opacityCtrl = displayFolder.add(params, 'opacity', 0, 1, 0.05).name('Opacity');
     opacityCtrl.onChange((value) => {
         if (currentMaterial && !params.useShaderMaterial) {
+            // For PointsMaterial
             currentMaterial.opacity = value;
             currentMaterial.transparent = value < 1;
+        } else if (currentMaterial && currentMaterial.uniforms && currentMaterial.uniforms.uOpacity) {
+            // For ShaderMaterial
+            currentMaterial.uniforms.uOpacity.value = value;
         }
     });
     
@@ -1156,14 +1164,10 @@ function initGUI() {
     const updateControlsState = () => {
         const isShaderEnabled = params.useShaderMaterial;
         
-        // Disable/enable pointSize and opacity controls
-        if (isShaderEnabled) {
-            pointSizeCtrl.disable();
-            opacityCtrl.disable();
-        } else {
-            pointSizeCtrl.enable();
-            opacityCtrl.enable();
-        }
+        // Point size and opacity controls work for both materials now
+        // Don't disable them anymore
+        pointSizeCtrl.enable();
+        opacityCtrl.enable();
         
         // Color mode and custom color are always active when shader material is enabled
         if (isShaderEnabled) {
@@ -1286,19 +1290,23 @@ function applyAnimation(type) {
             const fragmentShader = useVertexColors ? `
                 precision highp float;
                 varying vec3 vColor;
+                uniform float uOpacity;
                 void main() {
                     float dist = length(gl_PointCoord - vec2(0.5));
                     if (dist > 0.5) discard;
                     float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                    alpha *= uOpacity;
                     gl_FragColor = vec4(vColor, alpha);
                 }
             ` : `
                 precision highp float;
                 uniform vec3 uColor;
+                uniform float uOpacity;
                 void main() {
                     float dist = length(gl_PointCoord - vec2(0.5));
                     if (dist > 0.5) discard;
                     float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                    alpha *= uOpacity;
                     gl_FragColor = vec4(uColor, alpha);
                 }
             `;
@@ -1307,7 +1315,9 @@ function applyAnimation(type) {
                 uTime: { value: animationTime },
                 uDuration: { value: 2.0 },
                 uAmplitude: { value: params.animAmplitude },
-                uSpeed: { value: params.animSpeed }
+                uSpeed: { value: params.animSpeed },
+                uPointSize: { value: params.pointSize * 100.0 }, // Конвертируем 0.01-0.2 в 1-20 пикселей
+                uOpacity: { value: params.opacity } // Прозрачность
             };
             
             if (!useVertexColors) {
@@ -1402,12 +1412,14 @@ function applyAnimation(type) {
             varying float vWaveIntensity;
             uniform vec3 uWaveColor;
             uniform float uWaveColorIntensity;
+            uniform float uOpacity;
             
             void main() {
                 // Point shape
                 float dist = length(gl_PointCoord - vec2(0.5));
                 if (dist > 0.5) discard;
                 float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                alpha *= uOpacity;
                 
                 // Normalize color intensity: map from 0-10 to 0.0-1.0
                 float normalizedIntensity = uWaveColorIntensity * 0.1;
@@ -1427,12 +1439,14 @@ function applyAnimation(type) {
             varying float vWaveIntensity;
             uniform vec3 uWaveColor;
             uniform float uWaveColorIntensity;
+            uniform float uOpacity;
             
             void main() {
                 // Point shape
                 float dist = length(gl_PointCoord - vec2(0.5));
                 if (dist > 0.5) discard;
                 float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                alpha *= uOpacity;
                 
                 // Normalize color intensity: map from 0-10 to 0.0-1.0
                 float normalizedIntensity = uWaveColorIntensity * 0.1;
@@ -1452,20 +1466,24 @@ function applyAnimation(type) {
             precision highp float;
             varying vec3 vColor;
             varying float vWaveIntensity;
+            uniform float uOpacity;
             void main() {
                 float dist = length(gl_PointCoord - vec2(0.5));
                 if (dist > 0.5) discard;
                 float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                alpha *= uOpacity;
                 gl_FragColor = vec4(vColor, alpha);
             }
         ` : `
             precision highp float;
             uniform vec3 uColor;
             varying float vWaveIntensity;
+            uniform float uOpacity;
             void main() {
                 float dist = length(gl_PointCoord - vec2(0.5));
                 if (dist > 0.5) discard;
                 float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                alpha *= uOpacity;
                 gl_FragColor = vec4(uColor, alpha);
             }
         `;
@@ -1475,7 +1493,9 @@ function applyAnimation(type) {
         uTime: { value: 0 },
         uDuration: { value: 2.0 },
         uAmplitude: { value: params.animAmplitude },
-        uSpeed: { value: params.animSpeed }
+        uSpeed: { value: params.animSpeed },
+        uPointSize: { value: params.pointSize * 100.0 }, // Конвертируем 0.01-0.2 в 1-20 пикселей
+        uOpacity: { value: params.opacity } // Прозрачность
     };
     
     
@@ -1663,17 +1683,19 @@ function getVertexShader(type, hasColors = true) {
     
     if (type === 'none') {
         animationCode = `
+            uniform float uPointSize;
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0; // No wave intensity for 'none' animation
                 vec3 pos = position;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                gl_PointSize = 3.0;
+                gl_PointSize = uPointSize;
             }
         `;
     } else if (type === 'rain') {
         animationCode = `
             uniform float uDropHeight;
+            uniform float uPointSize;
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0;
@@ -1682,12 +1704,13 @@ function getVertexShader(type, hasColors = true) {
                 vec3 start = vec3(position.x, position.y + uDropHeight, position.z);
                 vec3 pos = mix(start, position, easeOutBounce(t));
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                gl_PointSize = 3.0;
+                gl_PointSize = uPointSize;
             }
         `;
     } else if (type === 'wave') {
         animationCode = `
             uniform float uFrequency;
+            uniform float uPointSize;
             void main() {
                 vWaveIntensity = 0.0;
                 float dist = length(position.xz);
@@ -1726,13 +1749,14 @@ function getVertexShader(type, hasColors = true) {
                 
                 vec3 pos = position + vec3(0.0, wave, 0.0);
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                gl_PointSize = 3.0;
+                gl_PointSize = uPointSize;
             }
         `;
     } else if (type === 'tornado') {
         animationCode = `
             uniform float uFunnelRadius;
             uniform float uRotationSpeed;
+            uniform float uPointSize;
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0;
@@ -1744,13 +1768,14 @@ function getVertexShader(type, hasColors = true) {
                 vec3 spiral = vec3(cos(angle) * radius, position.y, sin(angle) * radius);
                 vec3 pos = mix(spiral, position, progress);
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                gl_PointSize = 3.0;
+                gl_PointSize = uPointSize;
             }
         `;
     } else if (type === 'explosion') {
         animationCode = `
             uniform vec3 uCenter;
             uniform float uExplosionRadius;
+            uniform float uPointSize;
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0;
@@ -1760,13 +1785,14 @@ function getVertexShader(type, hasColors = true) {
                 vec3 exploded = uCenter + dir * uExplosionRadius * (hash(float(gl_VertexID)) * 0.5 + 0.5);
                 vec3 pos = mix(exploded, position, easeOutExpo(t));
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                gl_PointSize = 3.0;
+                gl_PointSize = uPointSize;
             }
         `;
     } else if (type === 'morph') {
         animationCode = `
             uniform float uNoiseScale;
             uniform float uNoiseAmplitude;
+            uniform float uPointSize;
             void main() {
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0;
@@ -1780,7 +1806,7 @@ function getVertexShader(type, hasColors = true) {
                 );
                 vec3 pos = mix(position + noise * uNoiseAmplitude * uAmplitude, position, progress);
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                gl_PointSize = 3.0;
+                gl_PointSize = uPointSize;
             }
         `;
     } else if (type === 'spherical_waves') {
@@ -1792,6 +1818,7 @@ function getVertexShader(type, hasColors = true) {
             uniform float uMaxDistance; // Maximum distance from center
             uniform float uDisplacementAxis; // 0=x, 1=y, 2=z
             uniform float uDisplacement; // Displacement amount (0-10)
+            uniform float uPointSize;
             
             void main() {
                 // Calculate distance from center (local coordinates 0,0,0)
@@ -1895,7 +1922,7 @@ function getVertexShader(type, hasColors = true) {
                 }
                 
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                gl_PointSize = 3.0;
+                gl_PointSize = uPointSize;
             }
         `;
     }
@@ -1949,6 +1976,15 @@ function updateEstimatedFileSize(pointCount) {
 function animate() {
     requestAnimationFrame(animate);
     
+    // Update point size and opacity uniforms for shader material
+    if (pointCloud && pointCloud.material && pointCloud.material.uniforms) {
+        if (pointCloud.material.uniforms.uPointSize) {
+            pointCloud.material.uniforms.uPointSize.value = params.pointSize * 100.0;
+        }
+        if (pointCloud.material.uniforms.uOpacity) {
+            pointCloud.material.uniforms.uOpacity.value = params.opacity;
+        }
+    }
     
     if (currentAnimation !== 'none' && pointCloud && pointCloud.material && pointCloud.material.uniforms) {
         // Update animation time for spherical waves (continuous, no duration limit)
