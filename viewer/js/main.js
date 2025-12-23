@@ -90,6 +90,7 @@ const params = {
     wavesPeriod: 1.0, // Number of simultaneous waves (1-10) - how often waves are generated
     wavesSpeed: 3.0, // Wave propagation speed (1-10) - how fast waves travel
     wavesColor: '#ffffff', // Wave color (white by default)
+    wavesColorIntensity: 5.0, // Wave color intensity (0-10) - how pronounced the wave color is
     wavesDisplacementAxis: 'y', // Displacement axis: 'x', 'y', or 'z'
     wavesDisplacement: 1.0 // Displacement amount (0-10) in conditional units
 };
@@ -1239,6 +1240,14 @@ function initGUI() {
         }
     });
     
+    // Wave color intensity control (0-10)
+    const wavesColorIntensityCtrl = animFolder.add(params, 'wavesColorIntensity', 0, 10, 0.1).name('Color Intensity');
+    wavesColorIntensityCtrl.onChange((value) => {
+        if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWaveColorIntensity) {
+            pointCloud.material.uniforms.uWaveColorIntensity.value = value;
+        }
+    });
+    
     // Displacement axis control
     const wavesDisplacementAxisCtrl = animFolder.add(params, 'wavesDisplacementAxis', ['x', 'y', 'z']).name('Displacement Axis');
     wavesDisplacementAxisCtrl.onChange((value) => {
@@ -1392,6 +1401,7 @@ function applyAnimation(type) {
             varying vec3 vColor;
             varying float vWaveIntensity;
             uniform vec3 uWaveColor;
+            uniform float uWaveColorIntensity;
             
             void main() {
                 // Point shape
@@ -1399,8 +1409,15 @@ function applyAnimation(type) {
                 if (dist > 0.5) discard;
                 float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
                 
-                // Interpolate between base color and wave color based on intensity
-                vec3 finalColor = mix(vColor, uWaveColor, vWaveIntensity);
+                // Normalize color intensity: map from 0-10 to 0.0-1.0
+                float normalizedIntensity = uWaveColorIntensity * 0.1;
+                
+                // Calculate effective wave intensity: multiply wave intensity by color intensity
+                // This controls how pronounced the wave color is
+                float effectiveIntensity = vWaveIntensity * normalizedIntensity;
+                
+                // Interpolate between base color and wave color based on effective intensity
+                vec3 finalColor = mix(vColor, uWaveColor, effectiveIntensity);
                 
                 gl_FragColor = vec4(finalColor, alpha);
             }
@@ -1409,6 +1426,7 @@ function applyAnimation(type) {
             uniform vec3 uColor;
             varying float vWaveIntensity;
             uniform vec3 uWaveColor;
+            uniform float uWaveColorIntensity;
             
             void main() {
                 // Point shape
@@ -1416,8 +1434,15 @@ function applyAnimation(type) {
                 if (dist > 0.5) discard;
                 float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
                 
-                // Interpolate between base color and wave color based on intensity
-                vec3 finalColor = mix(uColor, uWaveColor, vWaveIntensity);
+                // Normalize color intensity: map from 0-10 to 0.0-1.0
+                float normalizedIntensity = uWaveColorIntensity * 0.1;
+                
+                // Calculate effective wave intensity: multiply wave intensity by color intensity
+                // This controls how pronounced the wave color is
+                float effectiveIntensity = vWaveIntensity * normalizedIntensity;
+                
+                // Interpolate between base color and wave color based on effective intensity
+                vec3 finalColor = mix(uColor, uWaveColor, effectiveIntensity);
                 
                 gl_FragColor = vec4(finalColor, alpha);
             }
@@ -1487,6 +1512,7 @@ function applyAnimation(type) {
         // Wave color uniform
         const waveColor = new THREE.Color(params.wavesColor);
         uniforms.uWaveColor = { value: waveColor };
+        uniforms.uWaveColorIntensity = { value: params.wavesColorIntensity }; // Color intensity (0-10)
         // Displacement settings
         uniforms.uDisplacementAxis = { value: params.wavesDisplacementAxis === 'x' ? 0 : (params.wavesDisplacementAxis === 'y' ? 1 : 2) }; // 0=x, 1=y, 2=z
         uniforms.uDisplacement = { value: params.wavesDisplacement };
