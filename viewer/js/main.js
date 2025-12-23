@@ -2297,15 +2297,33 @@ function serializeParamsToURL() {
     url.searchParams.set('wavesDisplacementAxis', params.wavesDisplacementAxis);
     url.searchParams.set('wavesDisplacement', params.wavesDisplacement.toString());
     
-    // Serialize camera position
-    url.searchParams.set('camX', camera.position.x.toFixed(3));
-    url.searchParams.set('camY', camera.position.y.toFixed(3));
-    url.searchParams.set('camZ', camera.position.z.toFixed(3));
-    
-    // Serialize camera target (OrbitControls target)
-    url.searchParams.set('targetX', controls.target.x.toFixed(3));
-    url.searchParams.set('targetY', controls.target.y.toFixed(3));
-    url.searchParams.set('targetZ', controls.target.z.toFixed(3));
+    // Serialize camera viewport relative to model center
+    // Calculate model center if pointCloud exists
+    if (pointCloud && pointCloud.geometry) {
+        pointCloud.geometry.computeBoundingBox();
+        const box = pointCloud.geometry.boundingBox;
+        const modelCenter = box.getCenter(new THREE.Vector3());
+        
+        // Calculate camera position relative to model center
+        const camOffset = new THREE.Vector3().subVectors(camera.position, modelCenter);
+        url.searchParams.set('camOffsetX', camOffset.x.toFixed(3));
+        url.searchParams.set('camOffsetY', camOffset.y.toFixed(3));
+        url.searchParams.set('camOffsetZ', camOffset.z.toFixed(3));
+        
+        // Calculate target offset relative to model center
+        const targetOffset = new THREE.Vector3().subVectors(controls.target, modelCenter);
+        url.searchParams.set('targetOffsetX', targetOffset.x.toFixed(3));
+        url.searchParams.set('targetOffsetY', targetOffset.y.toFixed(3));
+        url.searchParams.set('targetOffsetZ', targetOffset.z.toFixed(3));
+    } else {
+        // Fallback to absolute coordinates if no model loaded
+        url.searchParams.set('camX', camera.position.x.toFixed(3));
+        url.searchParams.set('camY', camera.position.y.toFixed(3));
+        url.searchParams.set('camZ', camera.position.z.toFixed(3));
+        url.searchParams.set('targetX', controls.target.x.toFixed(3));
+        url.searchParams.set('targetY', controls.target.y.toFixed(3));
+        url.searchParams.set('targetZ', controls.target.z.toFixed(3));
+    }
     
     // Restore model parameter if it existed
     if (modelParam) {
@@ -2394,24 +2412,30 @@ function deserializeParamsFromURL() {
         hasParams = true;
     }
     
-    // Deserialize camera position
-    if (urlParams.has('camX') && urlParams.has('camY') && urlParams.has('camZ')) {
-        camera.position.set(
-            parseFloat(urlParams.get('camX')),
-            parseFloat(urlParams.get('camY')),
-            parseFloat(urlParams.get('camZ'))
-        );
-        hasParams = true;
-    }
-    
-    // Deserialize camera target
-    if (urlParams.has('targetX') && urlParams.has('targetY') && urlParams.has('targetZ')) {
-        controls.target.set(
-            parseFloat(urlParams.get('targetX')),
-            parseFloat(urlParams.get('targetY')),
-            parseFloat(urlParams.get('targetZ'))
-        );
-        controls.update();
+    // Store viewport parameters for restoration after model loads
+    // We'll restore them in applyRestoredParams() after pointCloud is created
+    if (urlParams.has('camOffsetX') || urlParams.has('camX')) {
+        // Mark that we have viewport parameters to restore
+        params._restoreViewport = true;
+        if (urlParams.has('camOffsetX')) {
+            // Relative coordinates (preferred)
+            params._camOffsetX = parseFloat(urlParams.get('camOffsetX'));
+            params._camOffsetY = parseFloat(urlParams.get('camOffsetY'));
+            params._camOffsetZ = parseFloat(urlParams.get('camOffsetZ'));
+            params._targetOffsetX = parseFloat(urlParams.get('targetOffsetX'));
+            params._targetOffsetY = parseFloat(urlParams.get('targetOffsetY'));
+            params._targetOffsetZ = parseFloat(urlParams.get('targetOffsetZ'));
+            params._useRelativeViewport = true;
+        } else {
+            // Absolute coordinates (fallback)
+            params._camX = parseFloat(urlParams.get('camX'));
+            params._camY = parseFloat(urlParams.get('camY'));
+            params._camZ = parseFloat(urlParams.get('camZ'));
+            params._targetX = parseFloat(urlParams.get('targetX'));
+            params._targetY = parseFloat(urlParams.get('targetY'));
+            params._targetZ = parseFloat(urlParams.get('targetZ'));
+            params._useRelativeViewport = false;
+        }
         hasParams = true;
     }
     
