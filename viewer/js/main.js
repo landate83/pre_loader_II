@@ -940,13 +940,10 @@ function createPointCloud(positionAttr, colorAttr) {
     // Apply current animation (but preserve vertexColors if colors exist)
     const savedHasColors = hasColors;
     
-    // Auto-enable spherical waves if enabled in params
-    if (params.wavesEnabled) {
-        params.animation = 'spherical_waves';
-        currentAnimation = 'spherical_waves';
-    }
+    // Don't auto-enable animations on load - user must enable manually via GUI
+    // Animation will be applied based on params.animation (default: 'none')
     
-    applyAnimation(currentAnimation);
+    applyAnimation(params.animation);
     currentAnimation = params.animation;
     
     // After applying animation, restore vertexColors if needed
@@ -1739,7 +1736,6 @@ function getVertexShader(type, hasColors = true) {
             uniform float uWavesAmplitude;
             uniform float uWavePeriod;
             uniform float uWavesSpeed;
-            varying float vWaveIntensity;
             
             void main() {
                 // Calculate distance from center (local coordinates 0,0,0)
