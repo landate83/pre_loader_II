@@ -1775,31 +1775,64 @@ function getVertexShader(type, hasColors = true) {
                 // Normalize wave speed: map from 1-10 to actual speed (2.0 to 20.0 units per second)
                 float normalizedSpeed = uWavesSpeed * 2.0;
                 
-                // Calculate wave interval: how far apart waves start
+                // Calculate wave interval: how far apart waves start (in distance units)
                 // More waves (higher period) = smaller interval between wave starts
-                // If period = 5, we want 5 waves, so interval = maxDistance / 5
+                // If period = 5, we want up to 5 waves simultaneously, so interval = maxDistance / 5
                 float waveInterval = uMaxDistance / max(uWavePeriod, 1.0);
                 
-                // Calculate which wave this point might be affected by
-                // Each wave starts at a different distance from center
-                float waveIndex = floor(distance / waveInterval);
-                float waveStartDistance = waveIndex * waveInterval;
+                // Calculate time interval: how often new waves start (in seconds)
+                // Time for one wave to travel waveInterval distance
+                float timeInterval = waveInterval / normalizedSpeed;
                 
-                // Calculate current position of this wave front
-                // Wave travels from center outward at normalizedSpeed
-                float wavePhase = mod(uTime * normalizedSpeed, waveInterval);
+                // Calculate current wave number (most recent wave that started)
+                float currentWaveNumber = floor(uTime / timeInterval);
                 
-                // Calculate distance from current wave front
-                float distFromWave = abs(distance - (waveStartDistance + wavePhase));
+                // Check multiple recent waves to find which one affects this point
+                // We check up to uWavePeriod waves back
+                float maxIntensity = 0.0;
+                float numWavesToCheck = min(uWavePeriod, 10.0); // Limit to reasonable number
                 
                 // Wave width: controlled by amplitude (1-10)
                 // Normalize amplitude: map from 1-10 to wave width (0.05 to 0.5 of maxDistance)
                 float normalizedAmplitude = uWavesAmplitude * 0.05; // 0.05 to 0.5
                 float waveWidth = uMaxDistance * normalizedAmplitude;
                 
-                // Calculate wave intensity using smoothstep for smooth edges
-                // Intensity is 1.0 at wave front, 0.0 away from wave
-                float intensity = 1.0 - smoothstep(0.0, waveWidth, distFromWave);
+                for (float i = 0.0; i < numWavesToCheck; i += 1.0) {
+                    // Calculate wave number to check
+                    float waveNum = currentWaveNumber - i;
+                    
+                    // Only process if wave has started
+                    if (waveNum >= 0.0) {
+                        // Calculate start time for this wave
+                        float waveStartTime = waveNum * timeInterval;
+                        
+                        // Calculate how long this wave has been traveling
+                        float waveTravelTime = uTime - waveStartTime;
+                        
+                        // Only process if wave has started and hasn't traveled too far
+                        if (waveTravelTime >= 0.0) {
+                            // Calculate current position of this wave front (distance from center)
+                            float waveFrontDistance = waveTravelTime * normalizedSpeed;
+                            
+                            // Only process if wave is still within reasonable distance
+                            if (waveFrontDistance <= uMaxDistance * 1.5) {
+                                // Calculate distance from this wave front
+                                float distFromThisWave = abs(distance - waveFrontDistance);
+                                
+                                // Calculate intensity for this wave
+                                float waveIntensity = 1.0 - smoothstep(0.0, waveWidth, distFromThisWave);
+                                
+                                // Take maximum intensity from all waves
+                                maxIntensity = max(maxIntensity, waveIntensity);
+                            }
+                        }
+                    }
+                }
+                
+                // Use maximum intensity found
+                float intensity = maxIntensity;
+                
+                // Intensity is already calculated in the loop above
                 
                 // Store intensity for fragment shader
                 vWaveIntensity = intensity;
