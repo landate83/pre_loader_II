@@ -30,8 +30,8 @@ Thumbs.db
 dist/
 build/
 
-# Test files (optional - можно включить если нужны)
-# tests/
+# Test files
+tests/
 
 # Large binary files (но viewer/default_scenes/ нужны!)
 # *.glb
