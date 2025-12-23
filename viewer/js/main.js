@@ -993,24 +993,34 @@ function createPointCloud(positionAttr, colorAttr) {
         applyRestoredParams();
     }
     
-    // Apply current animation (but preserve vertexColors if colors exist)
-    const savedHasColors = hasColors;
-    
     // Don't auto-enable animations on load - user must enable manually via GUI
     // Animation will be applied based on params.animation (default: 'none')
     
     applyAnimation(params.animation);
     currentAnimation = params.animation;
     
-    // After applying animation, restore vertexColors if needed
-    if (savedHasColors && currentMaterial) {
-        console.log('Restoring vertexColors after animation application');
-        currentMaterial.vertexColors = true;
-        // Only set color for PointsMaterial (ShaderMaterial doesn't have color property)
-        if (currentMaterial.isPointsMaterial && currentMaterial.color) {
-            currentMaterial.color.set(0xffffff);
+    // After applying animation, restore colorMode settings
+    // This ensures custom color mode is preserved when switching scenes
+    if (currentMaterial) {
+        if (params.colorMode === 'custom') {
+            if (!params.useShaderMaterial && currentMaterial.isPointsMaterial) {
+                // For PointsMaterial
+                currentMaterial.vertexColors = false;
+                currentMaterial.color.set(params.customColor);
+                currentMaterial.needsUpdate = true;
+            } else if (currentMaterial.uniforms && currentMaterial.uniforms.uColor) {
+                // For ShaderMaterial
+                currentMaterial.uniforms.uColor.value = new THREE.Color(params.customColor);
+            }
+        } else if (params.colorMode === 'file' && hasColors) {
+            if (!params.useShaderMaterial && currentMaterial.isPointsMaterial) {
+                // For PointsMaterial
+                currentMaterial.vertexColors = true;
+                currentMaterial.color.set(0xffffff);
+                currentMaterial.needsUpdate = true;
+            }
+            // For ShaderMaterial, vertexColors is already set correctly in applyAnimation
         }
-        currentMaterial.needsUpdate = true;
     }
 }
 
