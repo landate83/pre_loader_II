@@ -2497,6 +2497,34 @@ function applyRestoredParams() {
             applyAnimation('none');
         }
     }
+    
+    // Apply viewport restoration if pointCloud exists
+    if (params._restoreViewport && pointCloud && pointCloud.geometry) {
+        pointCloud.geometry.computeBoundingBox();
+        const box = pointCloud.geometry.boundingBox;
+        const modelCenter = box.getCenter(new THREE.Vector3());
+        
+        if (params._useRelativeViewport) {
+            // Restore relative viewport
+            camera.position.set(
+                modelCenter.x + params._camOffsetX,
+                modelCenter.y + params._camOffsetY,
+                modelCenter.z + params._camOffsetZ
+            );
+            controls.target.set(
+                modelCenter.x + params._targetOffsetX,
+                modelCenter.y + params._targetOffsetY,
+                modelCenter.z + params._targetOffsetZ
+            );
+        } else if (params._camX !== undefined) {
+            // Restore absolute viewport (fallback)
+            camera.position.set(params._camX, params._camY, params._camZ);
+            controls.target.set(params._targetX, params._targetY, params._targetZ);
+        }
+        
+        controls.update();
+        params._restoreViewport = false; // Clear flag after restoration
+    }
 }
 
 // Load list of available models from server
