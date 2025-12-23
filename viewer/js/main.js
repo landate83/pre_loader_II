@@ -98,6 +98,38 @@ const params = {
         animationTime = 0;
         isAnimationPlaying = true;
     },
+    // Share functionality
+    shareCurrentView: async () => {
+        try {
+            // Get current URL with all parameters
+            const currentURL = window.location.href;
+            
+            // Show loading notification
+            showNotification('Creating short link...', 'info');
+            
+            // Try to shorten URL
+            const shortURL = await shortenURL(currentURL);
+            
+            // Use short URL if available, otherwise use original
+            const urlToCopy = shortURL || currentURL;
+            
+            // Copy to clipboard
+            const copied = await copyToClipboard(urlToCopy);
+            
+            if (copied) {
+                if (shortURL) {
+                    showNotification('Short link copied to clipboard!', 'success');
+                } else {
+                    showNotification('Original URL copied to clipboard (shortening failed)', 'success');
+                }
+            } else {
+                showNotification('Failed to copy to clipboard. Please copy manually: ' + urlToCopy, 'error');
+            }
+        } catch (error) {
+            console.error('Error in shareCurrentView:', error);
+            showNotification('Failed to create share link. Please try again.', 'error');
+        }
+    },
     // Spherical Waves Animation
     wavesEnabled: false, // Enable/disable spherical waves
     wavesAmplitude: 3.0, // Wave width (1-10) - how many points will be affected by wave
@@ -2074,6 +2106,129 @@ function animate() {
     controls.update();
     
     renderer.render(scene, camera);
+}
+
+// ==================== URL Shortening and Sharing ====================
+
+// Shorten URL using TinyURL API
+async function shortenURL(longURL) {
+    try {
+        const apiURL = `https://tinyurl.com/api-create.php?url=${encodeURIComponent(longURL)}`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+        
+        const response = await fetch(apiURL, {
+            method: 'GET',
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const shortURL = await response.text();
+        
+        // TinyURL returns the short URL or an error message
+        if (shortURL.startsWith('http')) {
+            return shortURL.trim();
+        } else {
+            throw new Error('Invalid response from TinyURL');
+        }
+    } catch (error) {
+        console.error('Error shortening URL:', error);
+        return null; // Return null on error, will use original URL as fallback
+    }
+}
+
+// Copy text to clipboard
+async function copyToClipboard(text) {
+    try {
+        // Try modern Clipboard API first
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+        
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+            const successful = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            return successful;
+        } catch (err) {
+            document.body.removeChild(textArea);
+            return false;
+        }
+    } catch (error) {
+        console.error('Error copying to clipboard:', error);
+        return false;
+    }
+}
+
+// Show notification to user
+function showNotification(message, type = 'success') {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: ${type === 'success' ? '#4ecdc4' : '#ff6b6b'};
+        color: #1a1a2e;
+        padding: 12px 24px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        z-index: 10000;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 14px;
+        font-weight: 500;
+        max-width: 90%;
+        word-wrap: break-word;
+        animation: slideDown 0.3s ease-out;
+    `;
+    notification.textContent = message;
+    
+    // Add animation keyframes if not already added
+    if (!document.getElementById('notification-styles')) {
+        const style = document.createElement('style');
+        style.id = 'notification-styles';
+        style.textContent = `
+            @keyframes slideDown {
+                from {
+                    opacity: 0;
+                    transform: translateX(-50%) translateY(-20px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(-50%) translateY(0);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+    document.body.appendChild(notification);
+    
+    // Remove notification after 3 seconds
+    setTimeout(() => {
+        notification.style.animation = 'slideDown 0.3s ease-out reverse';
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 300);
+    }, 3000);
 }
 
 // ==================== URL Parameter Handling ====================
