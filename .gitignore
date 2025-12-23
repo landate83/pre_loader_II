@@ -38,3 +38,4 @@ tests/
 # *.ply
 # *.sog
 
+.vercel

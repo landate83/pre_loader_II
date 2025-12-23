@@ -52,15 +52,8 @@ let originalPositions = null; // Store original position data
 let originalColors = null; // Store original color data
 let originalPointCount = 0; // Store original point count
 
-// Default scenes list
-const defaultScenes = [
-    'bull_prcnt_100_draco.glb',
-    'Bull_prcnt_5_draco.glb',
-    'haram_small_z180_prcnt_100_draco.glb',
-    'haram_small_z180_prcnt_15_draco.glb',
-    'haram_z180_prcnt_100_draco.glb',
-    'haram_z180_prcnt_5_draco.glb'
-];
+// Default scenes list (will be loaded dynamically from server)
+let defaultScenes = [];
 
 // Parameters object for GUI
 const params = {
@@ -964,9 +957,15 @@ function initGUI() {
     // Scene folder - FIRST section
     sceneFolder = gui.addFolder('Scene');
     
-    // Scene selector dropdown
+    // Scene selector dropdown (will be updated when models are loaded)
+    // Initialize with empty array, will be updated after models are loaded
+    params.selectedScene = defaultScenes.length > 0 ? defaultScenes[0] : '';
     selectedSceneCtrl = sceneFolder.add(params, 'selectedScene', defaultScenes).name('Default Scene');
     selectedSceneCtrl.onChange((value) => {
+        if (!value || !defaultScenes.includes(value)) return;
+        // Update URL parameter
+        updateURLParameter('model', value);
+        // Load the file
         const url = `default_scenes/${value}`;
         loadFileFromURL(url, value);
     });
@@ -1670,15 +1669,108 @@ function animate() {
     renderer.render(scene, camera);
 }
 
-// Initialize GUI and load default scene on page load
-initGUI();
+// ==================== URL Parameter Handling ====================
 
-// Load first default scene automatically
-if (defaultScenes.length > 0) {
-    const firstScene = defaultScenes[0];
-    const url = `default_scenes/${firstScene}`;
-    loadFileFromURL(url, firstScene);
+// Get URL parameter value
+function getURLParameter(name) {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get(name);
 }
 
+// Update URL parameter without page reload
+function updateURLParameter(name, value) {
+    const url = new URL(window.location);
+    if (value) {
+        url.searchParams.set(name, value);
+    } else {
+        url.searchParams.delete(name);
+    }
+    window.history.pushState({}, '', url);
+}
+
+// Load list of available models from server
+async function loadModelsList() {
+    try {
+        // Try to fetch from API endpoint
+        const apiUrl = '/api/models';
+        const response = await fetch(apiUrl);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to load models: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        if (data.success && Array.isArray(data.models) && data.models.length > 0) {
+            defaultScenes = data.models;
+            console.log('Loaded models from server:', defaultScenes);
+            return true;
+        } else {
+            throw new Error('Invalid response format or empty models list');
+        }
+    } catch (error) {
+        console.error('Error loading models list from API:', error);
+        console.warn('Falling back to empty list. User can still load custom files.');
+        // Fallback to empty array - user can still load custom files
+        defaultScenes = [];
+        return false;
+    }
+}
+
+// Load scene from URL parameter if present
+function loadSceneFromURL() {
+    const modelParam = getURLParameter('model');
+    if (modelParam && defaultScenes.includes(modelParam)) {
+        // Set the selected scene in params
+        params.selectedScene = modelParam;
+        // Load the file
+        const url = `default_scenes/${modelParam}`;
+        loadFileFromURL(url, modelParam);
+        return true;
+    }
+    return false;
+}
+
+// Initialize application
+async function initializeApp() {
+    // Initialize GUI first (with empty scenes list)
+    initGUI();
+    
+    // Load models list from server
+    const modelsLoaded = await loadModelsList();
+    
+    if (modelsLoaded && defaultScenes.length > 0) {
+        // Update GUI with loaded models
+        if (selectedSceneCtrl) {
+            // Update the controller options
+            selectedSceneCtrl.options(defaultScenes);
+            
+            // Set default scene
+            params.selectedScene = defaultScenes[0];
+            
+            // Update display
+            selectedSceneCtrl.updateDisplay();
+        }
+        
+        // Try to load scene from URL parameter, otherwise load first default scene
+        if (!loadSceneFromURL()) {
+            const firstScene = defaultScenes[0];
+            params.selectedScene = firstScene;
+            if (selectedSceneCtrl) {
+                selectedSceneCtrl.updateDisplay();
+            }
+            const url = `default_scenes/${firstScene}`;
+            loadFileFromURL(url, firstScene);
+        }
+    } else {
+        console.warn('No models available. User can still load custom files.');
+        // Hide or disable scene selector if no models
+        if (selectedSceneCtrl) {
+            selectedSceneCtrl.disable();
+        }
+    }
+}
+
+// Start application
+initializeApp();
 animate();
 
