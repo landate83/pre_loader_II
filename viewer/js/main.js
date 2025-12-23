@@ -1800,6 +1800,11 @@ async function initializeApp() {
             console.log('🟢 [DEBUG] No URL parameter, loading first default scene...');
             const firstScene = defaultScenes[0];
             params.selectedScene = firstScene;
+            
+            // Update URL parameter with first scene
+            updateURLParameter('model', firstScene);
+            console.log('🟢 [DEBUG] Updated URL parameter to:', firstScene);
+            
             if (selectedSceneCtrl) {
                 selectedSceneCtrl.updateDisplay();
             }
