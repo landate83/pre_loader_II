@@ -55,6 +55,10 @@ let originalPointCount = 0; // Store original point count
 // Default scenes list (will be loaded dynamically from server)
 let defaultScenes = [];
 
+// Debounced camera position update for URL
+let cameraUpdateTimeout = null;
+const CAMERA_UPDATE_DELAY = 500; // Update URL 500ms after camera stops moving
+
 // Parameters object for GUI
 const params = {
     // Scene
@@ -1088,6 +1092,7 @@ function initGUI() {
             // For ShaderMaterial
             currentMaterial.uniforms.uOpacity.value = value;
         }
+        serializeParamsToURL();
     });
     
     // Color Mode and Custom Color controls
@@ -1127,6 +1132,7 @@ function initGUI() {
                 currentMaterial.needsUpdate = true;
             }
         }
+        serializeParamsToURL();
     });
     
     const customColorCtrl = displayFolder.addColor(params, 'customColor').name('Custom Color');
@@ -1152,12 +1158,14 @@ function initGUI() {
                 currentMaterial.needsUpdate = true;
             }
         }
+        serializeParamsToURL();
     });
     
     // Background color control
     const backgroundColorCtrl = displayFolder.addColor(params, 'backgroundColor').name('Background Color');
     backgroundColorCtrl.onChange((value) => {
         renderer.setClearColor(value);
+        serializeParamsToURL();
     });
     
     // Update controls state based on useShaderMaterial
@@ -1188,6 +1196,7 @@ function initGUI() {
         if (pointCloud) {
             applyAnimation(currentAnimation);
         }
+        serializeParamsToURL();
     });
     displayFolder.open();
     
@@ -1209,6 +1218,7 @@ function initGUI() {
             }
             applyAnimation(currentAnimation);
         }
+        serializeParamsToURL();
     });
     
     // Wave amplitude control (1-10) - controls wave width
@@ -1217,6 +1227,7 @@ function initGUI() {
         if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavesAmplitude) {
             pointCloud.material.uniforms.uWavesAmplitude.value = value;
         }
+        serializeParamsToURL();
     });
     
     // Wave period control (1-10) - number of simultaneous waves
@@ -1225,6 +1236,7 @@ function initGUI() {
         if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavePeriod) {
             pointCloud.material.uniforms.uWavePeriod.value = value;
         }
+        serializeParamsToURL();
     });
     
     // Wave speed control (units per second) - propagation speed
@@ -1233,6 +1245,7 @@ function initGUI() {
         if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWavesSpeed) {
             pointCloud.material.uniforms.uWavesSpeed.value = value;
         }
+        serializeParamsToURL();
     });
     
     // Wave color control
@@ -1242,6 +1255,7 @@ function initGUI() {
             const waveColor = new THREE.Color(value);
             pointCloud.material.uniforms.uWaveColor.value = waveColor;
         }
+        serializeParamsToURL();
     });
     
     // Wave color intensity control (0-10)
@@ -1250,6 +1264,7 @@ function initGUI() {
         if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWaveColorIntensity) {
             pointCloud.material.uniforms.uWaveColorIntensity.value = value;
         }
+        serializeParamsToURL();
     });
     
     // Displacement axis control
@@ -1259,6 +1274,7 @@ function initGUI() {
             const axisValue = value === 'x' ? 0 : (value === 'y' ? 1 : 2);
             pointCloud.material.uniforms.uDisplacementAxis.value = axisValue;
         }
+        serializeParamsToURL();
     });
     
     // Displacement amount control (0-10)
@@ -1267,6 +1283,7 @@ function initGUI() {
         if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uDisplacement) {
             pointCloud.material.uniforms.uDisplacement.value = value;
         }
+        serializeParamsToURL();
     });
     
     animFolder.open();
@@ -2040,6 +2057,14 @@ function animate() {
     
     controls.update();
     
+    // Debounced camera position update for URL
+    if (cameraUpdateTimeout) {
+        clearTimeout(cameraUpdateTimeout);
+    }
+    cameraUpdateTimeout = setTimeout(() => {
+        serializeParamsToURL();
+    }, CAMERA_UPDATE_DELAY);
+    
     renderer.render(scene, camera);
 }
 
@@ -2060,6 +2085,162 @@ function updateURLParameter(name, value) {
         url.searchParams.delete(name);
     }
     window.history.pushState({}, '', url);
+}
+
+// Serialize all parameters to URL
+function serializeParamsToURL() {
+    const url = new URL(window.location);
+    
+    // Clear existing params (except model)
+    const modelParam = url.searchParams.get('model');
+    url.searchParams.forEach((value, key) => {
+        if (key !== 'model') {
+            url.searchParams.delete(key);
+        }
+    });
+    
+    // Serialize display parameters
+    url.searchParams.set('pointSize', params.pointSize.toString());
+    url.searchParams.set('opacity', params.opacity.toString());
+    url.searchParams.set('colorMode', params.colorMode);
+    url.searchParams.set('customColor', params.customColor);
+    url.searchParams.set('backgroundColor', params.backgroundColor);
+    url.searchParams.set('useShaderMaterial', params.useShaderMaterial.toString());
+    
+    // Serialize animation parameters
+    url.searchParams.set('animation', params.animation);
+    url.searchParams.set('animSpeed', params.animSpeed.toString());
+    url.searchParams.set('animAmplitude', params.animAmplitude.toString());
+    
+    // Serialize wave parameters
+    url.searchParams.set('wavesEnabled', params.wavesEnabled.toString());
+    url.searchParams.set('wavesAmplitude', params.wavesAmplitude.toString());
+    url.searchParams.set('wavesPeriod', params.wavesPeriod.toString());
+    url.searchParams.set('wavesSpeed', params.wavesSpeed.toString());
+    url.searchParams.set('wavesColor', params.wavesColor);
+    url.searchParams.set('wavesColorIntensity', params.wavesColorIntensity.toString());
+    url.searchParams.set('wavesDisplacementAxis', params.wavesDisplacementAxis);
+    url.searchParams.set('wavesDisplacement', params.wavesDisplacement.toString());
+    
+    // Serialize camera position
+    url.searchParams.set('camX', camera.position.x.toFixed(3));
+    url.searchParams.set('camY', camera.position.y.toFixed(3));
+    url.searchParams.set('camZ', camera.position.z.toFixed(3));
+    
+    // Serialize camera target (OrbitControls target)
+    url.searchParams.set('targetX', controls.target.x.toFixed(3));
+    url.searchParams.set('targetY', controls.target.y.toFixed(3));
+    url.searchParams.set('targetZ', controls.target.z.toFixed(3));
+    
+    // Restore model parameter if it existed
+    if (modelParam) {
+        url.searchParams.set('model', modelParam);
+    }
+    
+    window.history.replaceState({}, '', url);
+}
+
+// Deserialize parameters from URL
+function deserializeParamsFromURL() {
+    const urlParams = new URLSearchParams(window.location.search);
+    let hasParams = false;
+    
+    // Deserialize display parameters
+    if (urlParams.has('pointSize')) {
+        params.pointSize = parseFloat(urlParams.get('pointSize'));
+        hasParams = true;
+    }
+    if (urlParams.has('opacity')) {
+        params.opacity = parseFloat(urlParams.get('opacity'));
+        hasParams = true;
+    }
+    if (urlParams.has('colorMode')) {
+        params.colorMode = urlParams.get('colorMode');
+        hasParams = true;
+    }
+    if (urlParams.has('customColor')) {
+        params.customColor = urlParams.get('customColor');
+        hasParams = true;
+    }
+    if (urlParams.has('backgroundColor')) {
+        params.backgroundColor = urlParams.get('backgroundColor');
+        hasParams = true;
+    }
+    if (urlParams.has('useShaderMaterial')) {
+        params.useShaderMaterial = urlParams.get('useShaderMaterial') === 'true';
+        hasParams = true;
+    }
+    
+    // Deserialize animation parameters
+    if (urlParams.has('animation')) {
+        params.animation = urlParams.get('animation');
+        hasParams = true;
+    }
+    if (urlParams.has('animSpeed')) {
+        params.animSpeed = parseFloat(urlParams.get('animSpeed'));
+        hasParams = true;
+    }
+    if (urlParams.has('animAmplitude')) {
+        params.animAmplitude = parseFloat(urlParams.get('animAmplitude'));
+        hasParams = true;
+    }
+    
+    // Deserialize wave parameters
+    if (urlParams.has('wavesEnabled')) {
+        params.wavesEnabled = urlParams.get('wavesEnabled') === 'true';
+        hasParams = true;
+    }
+    if (urlParams.has('wavesAmplitude')) {
+        params.wavesAmplitude = parseFloat(urlParams.get('wavesAmplitude'));
+        hasParams = true;
+    }
+    if (urlParams.has('wavesPeriod')) {
+        params.wavesPeriod = parseFloat(urlParams.get('wavesPeriod'));
+        hasParams = true;
+    }
+    if (urlParams.has('wavesSpeed')) {
+        params.wavesSpeed = parseFloat(urlParams.get('wavesSpeed'));
+        hasParams = true;
+    }
+    if (urlParams.has('wavesColor')) {
+        params.wavesColor = urlParams.get('wavesColor');
+        hasParams = true;
+    }
+    if (urlParams.has('wavesColorIntensity')) {
+        params.wavesColorIntensity = parseFloat(urlParams.get('wavesColorIntensity'));
+        hasParams = true;
+    }
+    if (urlParams.has('wavesDisplacementAxis')) {
+        params.wavesDisplacementAxis = urlParams.get('wavesDisplacementAxis');
+        hasParams = true;
+    }
+    if (urlParams.has('wavesDisplacement')) {
+        params.wavesDisplacement = parseFloat(urlParams.get('wavesDisplacement'));
+        hasParams = true;
+    }
+    
+    // Deserialize camera position
+    if (urlParams.has('camX') && urlParams.has('camY') && urlParams.has('camZ')) {
+        camera.position.set(
+            parseFloat(urlParams.get('camX')),
+            parseFloat(urlParams.get('camY')),
+            parseFloat(urlParams.get('camZ'))
+        );
+        hasParams = true;
+    }
+    
+    // Deserialize camera target
+    if (urlParams.has('targetX') && urlParams.has('targetY') && urlParams.has('targetZ')) {
+        controls.target.set(
+            parseFloat(urlParams.get('targetX')),
+            parseFloat(urlParams.get('targetY')),
+            parseFloat(urlParams.get('targetZ'))
+        );
+        controls.update();
+        hasParams = true;
+    }
+    
+    return hasParams;
 }
 
 // Load list of available models from server
@@ -2134,6 +2315,12 @@ function loadSceneFromURL() {
 async function initializeApp() {
     console.log('🟢 [DEBUG] ========== initializeApp() STARTED ==========');
     console.log('🟢 [DEBUG] Current defaultScenes before init:', defaultScenes);
+    
+    // Deserialize parameters from URL first (before GUI initialization)
+    const hasURLParams = deserializeParamsFromURL();
+    if (hasURLParams) {
+        console.log('🟢 [DEBUG] Parameters restored from URL');
+    }
     
     // Initialize GUI first (with empty scenes list)
     console.log('🟢 [DEBUG] Calling initGUI()...');
