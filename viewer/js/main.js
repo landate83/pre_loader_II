@@ -2636,11 +2636,19 @@ async function initializeApp() {
             selectedSceneCtrl.options(defaultScenes);
             console.log('🟢 [DEBUG] Options updated');
             
-            // Set default scene
-            params.selectedScene = defaultScenes[0];
-            console.log('🟢 [DEBUG] Set default scene to:', params.selectedScene);
+            // Check if we have a scene from URL, otherwise use first default scene
+            const modelParam = getURLParameter('model');
+            if (modelParam && defaultScenes.includes(modelParam)) {
+                // Use scene from URL
+                params.selectedScene = modelParam;
+                console.log('🟢 [DEBUG] Using scene from URL:', params.selectedScene);
+            } else {
+                // Set default scene
+                params.selectedScene = defaultScenes[0];
+                console.log('🟢 [DEBUG] Set default scene to:', params.selectedScene);
+            }
             
-            // Update display
+            // Update display to reflect the selected scene
             selectedSceneCtrl.updateDisplay();
             console.log('🟢 [DEBUG] Display updated');
         } else {
