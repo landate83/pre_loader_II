@@ -86,9 +86,10 @@ const params = {
     },
     // Spherical Waves Animation
     wavesEnabled: false, // Enable/disable spherical waves
-    wavesAmplitude: 5.0, // Wave amplitude (1-10)
+    wavesAmplitude: 5.0, // Wave amplitude (1-10) - affects Z displacement
     wavesPeriod: 5.0, // Period between waves (1-10)
-    wavesSpeed: 5.0 // Wave propagation speed (1-10)
+    wavesSpeed: 5.0, // Wave propagation speed (1-10)
+    wavesColor: '#00ccff' // Wave color (cyan/blue by default)
 };
 
 // Initialize GUI
@@ -1227,6 +1228,15 @@ function initGUI() {
         }
     });
     
+    // Wave color control
+    const wavesColorCtrl = animFolder.addColor(params, 'wavesColor').name('Wave Color');
+    wavesColorCtrl.onChange((value) => {
+        if (pointCloud && pointCloud.material && pointCloud.material.uniforms && pointCloud.material.uniforms.uWaveColor) {
+            const waveColor = new THREE.Color(value);
+            pointCloud.material.uniforms.uWaveColor.value = waveColor;
+        }
+    });
+    
     animFolder.open();
     
 }
@@ -1362,7 +1372,7 @@ function applyAnimation(type) {
             precision highp float;
             varying vec3 vColor;
             varying float vWaveIntensity;
-            uniform float uWavesAmplitude;
+            uniform vec3 uWaveColor;
             
             void main() {
                 // Point shape
@@ -1370,14 +1380,8 @@ function applyAnimation(type) {
                 if (dist > 0.5) discard;
                 float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
                 
-                // Wave color: bright cyan/blue for active wave
-                vec3 waveColor = vec3(0.0, 0.8, 1.0);
-                
-                // Normalize amplitude: map from 1-10 to color intensity multiplier
-                float colorIntensity = uWavesAmplitude * 0.1; // 0.1 to 1.0
-                
                 // Interpolate between base color and wave color based on intensity
-                vec3 finalColor = mix(vColor, waveColor * colorIntensity, vWaveIntensity);
+                vec3 finalColor = mix(vColor, uWaveColor, vWaveIntensity);
                 
                 gl_FragColor = vec4(finalColor, alpha);
             }
@@ -1385,7 +1389,7 @@ function applyAnimation(type) {
             precision highp float;
             uniform vec3 uColor;
             varying float vWaveIntensity;
-            uniform float uWavesAmplitude;
+            uniform vec3 uWaveColor;
             
             void main() {
                 // Point shape
@@ -1393,14 +1397,8 @@ function applyAnimation(type) {
                 if (dist > 0.5) discard;
                 float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
                 
-                // Wave color: bright cyan/blue for active wave
-                vec3 waveColor = vec3(0.0, 0.8, 1.0);
-                
-                // Normalize amplitude: map from 1-10 to color intensity multiplier
-                float colorIntensity = uWavesAmplitude * 0.1; // 0.1 to 1.0
-                
                 // Interpolate between base color and wave color based on intensity
-                vec3 finalColor = mix(uColor, waveColor * colorIntensity, vWaveIntensity);
+                vec3 finalColor = mix(uColor, uWaveColor, vWaveIntensity);
                 
                 gl_FragColor = vec4(finalColor, alpha);
             }
@@ -1463,6 +1461,9 @@ function applyAnimation(type) {
         uniforms.uWavesAmplitude = { value: params.wavesAmplitude };
         uniforms.uWavePeriod = { value: params.wavesPeriod };
         uniforms.uWavesSpeed = { value: params.wavesSpeed };
+        // Wave color uniform
+        const waveColor = new THREE.Color(params.wavesColor);
+        uniforms.uWaveColor = { value: waveColor };
     }
     
     
@@ -1770,8 +1771,17 @@ function getVertexShader(type, hasColors = true) {
                 // Base color (will be modified in fragment shader)
                 vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
                 
-                // Position remains unchanged (waves affect color, not position)
+                // Displace particles along Z axis based on wave intensity and amplitude
+                // Normalize amplitude: map from 1-10 to actual displacement (0.1 to 1.0 units)
+                float normalizedAmplitude = uWavesAmplitude * 0.1;
+                
+                // Calculate Z displacement: particles move forward (positive Z) when wave passes
+                float zDisplacement = intensity * normalizedAmplitude;
+                
+                // Apply displacement to position
                 vec3 pos = position;
+                pos.z += zDisplacement;
+                
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
                 gl_PointSize = 3.0;
             }
@@ -1842,6 +1852,10 @@ function animate() {
             }
             if (pointCloud.material.uniforms.uWavesSpeed) {
                 pointCloud.material.uniforms.uWavesSpeed.value = params.wavesSpeed;
+            }
+            if (pointCloud.material.uniforms.uWaveColor) {
+                const waveColor = new THREE.Color(params.wavesColor);
+                pointCloud.material.uniforms.uWaveColor.value = waveColor;
             }
         } else {
             // Only update animation time if playing (for other animations)
