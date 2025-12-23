@@ -955,6 +955,12 @@ function createPointCloud(positionAttr, colorAttr) {
     controls.target.copy(center);
     controls.update();
     
+    // Apply restored parameters after pointCloud is created
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.toString().length > 0) {
+        applyRestoredParams();
+    }
+    
     // Apply current animation (but preserve vertexColors if colors exist)
     const savedHasColors = hasColors;
     
