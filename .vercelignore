@@ -1,0 +1,21 @@
+# Python конвертер (не нужен для веб-вьювера)
+converter/
+tests/
+*.py
+requirements.txt
+__pycache__/
+*.pyc
+.Python
+env/
+venv/
+test_*.py
+
+# Документация
+AGENTS.md
+PLAN.md
+DEPLOY.md
+
+# Тестовые файлы в корне проекта (но viewer/default_scenes/ нужны!)
+alhram_20mm_draco.glb
+test_output.glb
+
