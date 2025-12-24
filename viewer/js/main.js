@@ -1044,6 +1044,26 @@ function initGUI() {
         gui.destroy();
     }
     
+    // Initialize Stats.js for FPS monitoring
+    if (!stats) {
+        stats = new Stats();
+        stats.showPanel(0); // 0: fps, 1: ms, 2: mb
+        stats.dom.style.position = 'fixed';
+        stats.dom.style.top = '20px';
+        stats.dom.style.left = '20px';
+        stats.dom.style.zIndex = '100';
+        document.body.appendChild(stats.dom);
+    }
+    
+    // Create FPS history canvas
+    if (!fpsCanvas) {
+        fpsCanvas = document.createElement('canvas');
+        fpsCanvas.width = 200;
+        fpsCanvas.height = 80;
+        fpsCanvas.style.cssText = 'background: rgba(26,26,46,0.9); border: 1px solid #444; border-radius: 4px;';
+        fpsCanvasCtx = fpsCanvas.getContext('2d');
+    }
+    
     // Create new GUI
     gui = new GUI({ autoPlace: true });
     gui.domElement.style.position = 'fixed';
