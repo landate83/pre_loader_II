@@ -1396,27 +1396,38 @@ function initGUI() {
     
     // FPS history graph - add as custom element
     if (fpsCanvas) {
-        // Use a dummy controller to get the folder's container
-        const dummyCtrl = performanceFolder.add({ dummy: '' }, 'dummy').name('');
-        const folderContainer = dummyCtrl.domElement ? dummyCtrl.domElement.parentElement : null;
-        dummyCtrl.destroy(); // Remove the dummy controller
-        
-        if (folderContainer) {
-            // Add FPS graph container
-            const fpsGraphContainer = document.createElement('div');
-            fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0; padding: 4px;';
-            fpsGraphContainer.appendChild(fpsCanvas);
+        try {
+            // Use a dummy controller to get the folder's container
+            const dummyObj = { dummy: '' };
+            const dummyCtrl = performanceFolder.add(dummyObj, 'dummy').name('');
             
-            // Find the ul element in the folder
-            const folderUl = folderContainer.querySelector('ul');
-            if (folderUl) {
-                const graphLi = document.createElement('li');
-                graphLi.appendChild(fpsGraphContainer);
-                folderUl.appendChild(graphLi);
-            } else if (folderContainer.appendChild) {
-                // Fallback: append directly to folder container
-                folderContainer.appendChild(fpsGraphContainer);
+            // Get the folder's container element
+            if (dummyCtrl && dummyCtrl.domElement) {
+                const folderContainer = dummyCtrl.domElement.parentElement;
+                
+                if (folderContainer) {
+                    // Add FPS graph container
+                    const fpsGraphContainer = document.createElement('div');
+                    fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0; padding: 4px;';
+                    fpsGraphContainer.appendChild(fpsCanvas);
+                    
+                    // Find the ul element in the folder
+                    const folderUl = folderContainer.querySelector('ul');
+                    if (folderUl) {
+                        const graphLi = document.createElement('li');
+                        graphLi.appendChild(fpsGraphContainer);
+                        folderUl.appendChild(graphLi);
+                    } else {
+                        // Fallback: append directly to folder container
+                        folderContainer.appendChild(fpsGraphContainer);
+                    }
+                }
+                
+                // Remove the dummy controller
+                dummyCtrl.destroy();
             }
+        } catch (error) {
+            console.error('Error adding FPS graph to GUI:', error);
         }
     }
     
