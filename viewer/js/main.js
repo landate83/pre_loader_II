@@ -2195,6 +2195,74 @@ function animate() {
     renderer.render(scene, camera);
 }
 
+// Draw FPS history graph
+function drawFPSGraph() {
+    if (!fpsCanvasCtx || fpsHistory.length < 2) return;
+    
+    const canvas = fpsCanvas;
+    const ctx = fpsCanvasCtx;
+    const width = canvas.width;
+    const height = canvas.height;
+    const padding = 4;
+    const graphWidth = width - padding * 2;
+    const graphHeight = height - padding * 2;
+    
+    // Clear canvas
+    ctx.fillStyle = 'rgba(26,26,46,0.9)';
+    ctx.fillRect(0, 0, width, height);
+    
+    // Find min and max FPS for scaling
+    const minFPS = Math.min(...fpsHistory);
+    const maxFPS = Math.max(...fpsHistory);
+    const fpsRange = Math.max(maxFPS - minFPS, 10); // At least 10 FPS range
+    
+    // Draw grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+        const y = padding + (graphHeight / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(padding, y);
+        ctx.lineTo(width - padding, y);
+        ctx.stroke();
+    }
+    
+    // Draw FPS line
+    ctx.strokeStyle = '#4ecdc4';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    
+    const stepX = graphWidth / (fpsHistory.length - 1);
+    for (let i = 0; i < fpsHistory.length; i++) {
+        const fps = fpsHistory[i];
+        const normalizedFPS = (fps - minFPS) / fpsRange;
+        const x = padding + i * stepX;
+        const y = padding + graphHeight - (normalizedFPS * graphHeight);
+        
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    }
+    ctx.stroke();
+    
+    // Draw current FPS value
+    const currentFPS = fpsHistory[fpsHistory.length - 1];
+    ctx.fillStyle = '#4ecdc4';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${currentFPS} FPS`, width - padding, height - padding);
+    
+    // Draw min/max labels
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${minFPS}`, padding, height - padding);
+    ctx.textAlign = 'right';
+    ctx.fillText(`${maxFPS}`, width - padding, padding + 10);
+}
+
 // ==================== URL Shortening and Sharing ====================
 
 // Shorten URL using v.gd API
