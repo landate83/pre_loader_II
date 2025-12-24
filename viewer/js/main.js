@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.js';
+import Stats from 'https://cdn.jsdelivr.net/npm/stats.js@0.17.0/src/Stats.js';
 
 // Load MeshoptDecoder dynamically to ensure it's ready
 let MeshoptDecoder = null;
@@ -82,6 +83,8 @@ const params = {
     maxPoints: 0, // Maximum points (filter control)
     pointPercent: 100, // Percentage of points (0-100)
     estimatedFileSize: '—', // Estimated file size for current point count
+    // Performance
+    currentFPS: 60, // Current FPS (read-only, updated by stats)
     // Display
     pointSize: 0.03,
     opacity: 1,
@@ -1348,6 +1351,22 @@ function initGUI() {
     });
     
     animFolder.open();
+    
+    // Performance monitoring folder
+    performanceFolder = gui.addFolder('Performance');
+    
+    // Current FPS display (read-only)
+    params.currentFPS = 60;
+    const fpsCtrl = performanceFolder.add(params, 'currentFPS').name('FPS').listen();
+    fpsCtrl.domElement.style.pointerEvents = 'none';
+    
+    // FPS history graph
+    const fpsGraphContainer = document.createElement('div');
+    fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0;';
+    fpsGraphContainer.appendChild(fpsCanvas);
+    performanceFolder.__ul.appendChild(fpsGraphContainer);
+    
+    performanceFolder.open();
     
 }
 
