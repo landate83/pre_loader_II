@@ -153,6 +153,15 @@ let maxPointsCtrl = null;
 let pointPercentCtrl = null;
 let estimatedFileSizeCtrl = null;
 let selectedSceneCtrl = null;
+let performanceFolder = null;
+
+// Performance monitoring
+let stats = null;
+let fpsHistory = [];
+const FPS_HISTORY_SIZE = 100; // Keep last 100 FPS values
+let fpsCanvas = null;
+let fpsCanvasCtx = null;
+let lastTime = performance.now();
 
 // ==================== File Loading ====================
 
@@ -1018,9 +1027,9 @@ function createPointCloud(positionAttr, colorAttr) {
         } else if (params.colorMode === 'file' && hasColors) {
             if (!params.useShaderMaterial && currentMaterial.isPointsMaterial) {
                 // For PointsMaterial
-                currentMaterial.vertexColors = true;
-                currentMaterial.color.set(0xffffff);
-                currentMaterial.needsUpdate = true;
+        currentMaterial.vertexColors = true;
+            currentMaterial.color.set(0xffffff);
+        currentMaterial.needsUpdate = true;
             }
             // For ShaderMaterial, vertexColors is already set correctly in applyAnimation
         }
@@ -1238,8 +1247,8 @@ function initGUI() {
         
         // Point size and opacity controls work for both materials now
         // Don't disable them anymore
-        pointSizeCtrl.enable();
-        opacityCtrl.enable();
+            pointSizeCtrl.enable();
+            opacityCtrl.enable();
         
         // Color mode and custom color are always active when shader material is enabled
         if (isShaderEnabled) {
@@ -1356,7 +1365,6 @@ function initGUI() {
     performanceFolder = gui.addFolder('Performance');
     
     // Current FPS display (read-only)
-    params.currentFPS = 60;
     const fpsCtrl = performanceFolder.add(params, 'currentFPS').name('FPS').listen();
     fpsCtrl.domElement.style.pointerEvents = 'none';
     
@@ -1504,18 +1512,18 @@ function applyAnimation(type) {
     let fragmentShader;
     if (type === 'spherical_waves') {
         fragmentShader = useVertexColors ? `
-            precision highp float;
-            varying vec3 vColor;
+        precision highp float;
+        varying vec3 vColor;
             varying float vWaveIntensity;
             uniform vec3 uWaveColor;
             uniform float uWaveColorIntensity;
             uniform float uOpacity;
             
-            void main() {
+        void main() {
                 // Point shape
-                float dist = length(gl_PointCoord - vec2(0.5));
-                if (dist > 0.5) discard;
-                float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+            float dist = length(gl_PointCoord - vec2(0.5));
+            if (dist > 0.5) discard;
+            float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
                 alpha *= uOpacity;
                 
                 // Normalize color intensity: map from 0-10 to 0.0-1.0
@@ -1569,21 +1577,21 @@ function applyAnimation(type) {
                 if (dist > 0.5) discard;
                 float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
                 alpha *= uOpacity;
-                gl_FragColor = vec4(vColor, alpha);
-            }
-        ` : `
-            precision highp float;
-            uniform vec3 uColor;
+            gl_FragColor = vec4(vColor, alpha);
+        }
+    ` : `
+        precision highp float;
+        uniform vec3 uColor;
             varying float vWaveIntensity;
             uniform float uOpacity;
-            void main() {
-                float dist = length(gl_PointCoord - vec2(0.5));
-                if (dist > 0.5) discard;
-                float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+        void main() {
+            float dist = length(gl_PointCoord - vec2(0.5));
+            if (dist > 0.5) discard;
+            float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
                 alpha *= uOpacity;
-                gl_FragColor = vec4(uColor, alpha);
-            }
-        `;
+            gl_FragColor = vec4(uColor, alpha);
+        }
+    `;
     }
     
     const uniforms = {
@@ -2066,6 +2074,33 @@ function updateEstimatedFileSize(pointCount) {
 function animate() {
     requestAnimationFrame(animate);
     
+    // Update stats
+    if (stats) {
+        stats.update();
+    }
+    
+    // Calculate and update FPS
+    const currentTime = performance.now();
+    const deltaTime = currentTime - lastTime;
+    const currentFPS = Math.round(1000 / deltaTime);
+    lastTime = currentTime;
+    
+    // Update FPS history
+    if (fpsHistory.length >= FPS_HISTORY_SIZE) {
+        fpsHistory.shift(); // Remove oldest value
+    }
+    fpsHistory.push(currentFPS);
+    
+    // Update params for GUI display
+    if (params.currentFPS !== undefined) {
+        params.currentFPS = currentFPS;
+    }
+    
+    // Draw FPS history graph
+    if (fpsCanvasCtx && fpsHistory.length > 1) {
+        drawFPSGraph();
+    }
+    
     // Update point size and opacity uniforms for shader material
     if (pointCloud && pointCloud.material && pointCloud.material.uniforms) {
         if (pointCloud.material.uniforms.uPointSize) {
@@ -2107,30 +2142,30 @@ function animate() {
             }
         } else {
             // Only update animation time if playing (for other animations)
-            if (isAnimationPlaying || params.animRepeat) {
-                animationTime += 0.016 * params.animSpeed; // ~60fps
-                pointCloud.material.uniforms.uTime.value = animationTime;
-                pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
-                pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
-                
-                const duration = pointCloud.material.uniforms.uDuration.value * 2;
-                
-                // Check if animation completed
-                if (animationTime > duration) {
-                    if (params.animRepeat) {
-                        // Auto-repeat: reset time
-                        animationTime = 0;
-                    } else {
-                        // No repeat: stop at the end
-                        animationTime = duration;
-                        isAnimationPlaying = false;
-                    }
+        if (isAnimationPlaying || params.animRepeat) {
+            animationTime += 0.016 * params.animSpeed; // ~60fps
+            pointCloud.material.uniforms.uTime.value = animationTime;
+            pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
+            pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
+            
+            const duration = pointCloud.material.uniforms.uDuration.value * 2;
+            
+            // Check if animation completed
+            if (animationTime > duration) {
+                if (params.animRepeat) {
+                    // Auto-repeat: reset time
+                    animationTime = 0;
+                } else {
+                    // No repeat: stop at the end
+                    animationTime = duration;
+                    isAnimationPlaying = false;
                 }
-            } else {
-                // Animation is paused, but still update uniforms for current time
-                pointCloud.material.uniforms.uTime.value = animationTime;
-                pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
-                pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
+            }
+        } else {
+            // Animation is paused, but still update uniforms for current time
+            pointCloud.material.uniforms.uTime.value = animationTime;
+            pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
+            pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
             }
         }
     }
@@ -2645,7 +2680,7 @@ async function initializeApp() {
     
     // Initialize GUI first (with empty scenes list)
     console.log('🟢 [DEBUG] Calling initGUI()...');
-    initGUI();
+initGUI();
     console.log('🟢 [DEBUG] initGUI() completed');
     console.log('🟢 [DEBUG] selectedSceneCtrl after initGUI:', selectedSceneCtrl);
     
@@ -2688,7 +2723,7 @@ async function initializeApp() {
         console.log('🟢 [DEBUG] Checking URL parameters...');
         if (!loadSceneFromURL()) {
             console.log('🟢 [DEBUG] No URL parameter, loading first default scene...');
-            const firstScene = defaultScenes[0];
+    const firstScene = defaultScenes[0];
             params.selectedScene = firstScene;
             
             // Update URL parameter with first scene
@@ -2698,9 +2733,9 @@ async function initializeApp() {
             if (selectedSceneCtrl) {
                 selectedSceneCtrl.updateDisplay();
             }
-            const url = `default_scenes/${firstScene}`;
+    const url = `default_scenes/${firstScene}`;
             console.log('🟢 [DEBUG] Loading scene from URL:', url);
-            loadFileFromURL(url, firstScene);
+    loadFileFromURL(url, firstScene);
         } else {
             console.log('🟢 [DEBUG] Scene loaded from URL parameter');
         }
