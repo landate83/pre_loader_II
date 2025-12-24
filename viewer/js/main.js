@@ -4,9 +4,6 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.js';
 
-// Stats.js is loaded via script tag in index.html
-// Access it via window.Stats
-
 // Load MeshoptDecoder dynamically to ensure it's ready
 let MeshoptDecoder = null;
 (async () => {
@@ -153,9 +150,6 @@ let maxPointsCtrl = null;
 let pointPercentCtrl = null;
 let estimatedFileSizeCtrl = null;
 let selectedSceneCtrl = null;
-
-// Performance monitoring - Stats.js only
-let stats = null;
 
 // ==================== File Loading ====================
 
