@@ -1395,40 +1395,39 @@ function initGUI() {
     fpsCtrl.domElement.style.pointerEvents = 'none';
     
     // FPS history graph - add as custom element
-    if (fpsCanvas) {
+    if (fpsCanvas && performanceFolder) {
         try {
-            // Wait a bit for GUI to render
-            setTimeout(() => {
-                try {
-                    // Find the performance folder's DOM element
-                    const folderTitle = Array.from(performanceFolder.domElement.querySelectorAll('.title')).find(
-                        el => el.textContent === 'Performance'
-                    );
+            // Use the folder's controllersContainer property if available
+            // Otherwise, access the DOM directly
+            const folderElement = performanceFolder.domElement || performanceFolder.$container;
+            
+            if (folderElement) {
+                // Find the ul element inside the folder
+                const folderUl = folderElement.querySelector('ul');
+                
+                if (folderUl) {
+                    // Add FPS graph container
+                    const fpsGraphContainer = document.createElement('div');
+                    fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0; padding: 4px;';
+                    fpsGraphContainer.appendChild(fpsCanvas);
                     
-                    if (folderTitle) {
-                        // Find the parent container (li element)
-                        const folderLi = folderTitle.closest('li');
-                        if (folderLi) {
-                            // Find the ul element inside the folder
-                            const folderUl = folderLi.querySelector('ul');
-                            if (folderUl) {
-                                // Add FPS graph container
-                                const fpsGraphContainer = document.createElement('div');
-                                fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0; padding: 4px;';
-                                fpsGraphContainer.appendChild(fpsCanvas);
-                                
-                                const graphLi = document.createElement('li');
-                                graphLi.appendChild(fpsGraphContainer);
-                                folderUl.appendChild(graphLi);
-                            }
-                        }
+                    const graphLi = document.createElement('li');
+                    graphLi.className = 'lil-gui';
+                    graphLi.appendChild(fpsGraphContainer);
+                    folderUl.appendChild(graphLi);
+                } else {
+                    // Fallback: try to find any container in the folder
+                    const container = folderElement.querySelector('.children') || folderElement;
+                    if (container && container.appendChild) {
+                        const fpsGraphContainer = document.createElement('div');
+                        fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0; padding: 4px;';
+                        fpsGraphContainer.appendChild(fpsCanvas);
+                        container.appendChild(fpsGraphContainer);
                     }
-                } catch (error) {
-                    console.error('Error adding FPS graph to GUI:', error);
                 }
-            }, 0);
+            }
         } catch (error) {
-            console.error('Error setting up FPS graph:', error);
+            console.error('Error adding FPS graph to GUI:', error);
         }
     }
     
