@@ -8,10 +8,13 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: system-ui; background: #1a1a2e; color: #eee; overflow: hidden; }
         #canvas { width: 100vw; height: 100vh; display: block; }
-        .dropzone { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(26,26,46,0.95); z-index: 100; }
+        .dropzone { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(26,26,46,0.95); z-index: 100; transition: opacity 0.2s ease; }
         .dropzone:not(.hidden) { display: flex; }
-        .dropzone-content { text-align: center; padding: 60px; border: 2px dashed #444; border-radius: 16px; }
-        .dropzone button { background: #4ecdc4; color: #1a1a2e; border: none; padding: 12px 32px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-top: 20px; }
+        .dropzone.drag-active { background: rgba(26,26,46,0.98); }
+        .dropzone.drag-active .dropzone-content { border-color: #4ecdc4; border-width: 3px; background: rgba(78,205,196,0.1); transform: scale(1.05); }
+        .dropzone-content { text-align: center; padding: 60px; border: 2px dashed #444; border-radius: 16px; transition: all 0.2s ease; }
+        .dropzone button { background: #4ecdc4; color: #1a1a2e; border: none; padding: 12px 32px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-top: 20px; transition: background 0.2s ease; }
+        .dropzone button:hover { background: #3eb8b0; }
     </style>
 </head>
 <body>

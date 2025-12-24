@@ -157,20 +157,77 @@ const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('file-input');
 const btnOpen = document.getElementById('btn-open');
 
-// Drag & Drop
-dropzone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-});
+// Drag & Drop - Global handlers on canvas and body
+let dragCounter = 0; // Track nested drag events
 
-dropzone.addEventListener('drop', (e) => {
+function handleDragEnter(e) {
     e.preventDefault();
     e.stopPropagation();
-    const file = e.dataTransfer.files[0];
-    if (file) {
-        loadFile(file);
+    dragCounter++;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+        dropzone.classList.remove('hidden');
+        dropzone.classList.add('drag-active');
     }
-});
+}
+
+function handleDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter--;
+    // Use setTimeout to handle nested element transitions
+    setTimeout(() => {
+        if (dragCounter === 0) {
+            dropzone.classList.remove('drag-active');
+            // Only hide if no file is being loaded
+            if (!pointCloud) {
+                dropzone.classList.add('hidden');
+            }
+        }
+    }, 50);
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter = 0;
+    dropzone.classList.remove('drag-active');
+    
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        const file = files[0];
+        const ext = file.name.toLowerCase().split('.').pop();
+        if (ext === 'glb' || ext === 'ply' || ext === 'sog') {
+            loadFile(file);
+        } else {
+            alert('Unsupported file format. Please use .ply, .sog, or .glb files.');
+            // Show dropzone again if no model is loaded
+            if (!pointCloud) {
+                dropzone.classList.remove('hidden');
+            }
+        }
+    }
+}
+
+// Add drag & drop handlers to canvas and body
+canvas.addEventListener('dragenter', handleDragEnter);
+canvas.addEventListener('dragover', handleDragOver);
+canvas.addEventListener('dragleave', handleDragLeave);
+canvas.addEventListener('drop', handleDrop);
+
+document.body.addEventListener('dragenter', handleDragEnter);
+document.body.addEventListener('dragover', handleDragOver);
+document.body.addEventListener('dragleave', handleDragLeave);
+document.body.addEventListener('drop', handleDrop);
+
+// Also keep existing dropzone handlers for compatibility
+dropzone.addEventListener('dragover', handleDragOver);
+dropzone.addEventListener('drop', handleDrop);
 
 // File input
 btnOpen.addEventListener('click', () => {
@@ -216,6 +273,10 @@ async function loadFileFromURL(url, filename) {
     } catch (error) {
         console.error('Error loading file from URL:', error);
         alert('Error loading file: ' + error.message);
+        // Show dropzone if file loading failed
+        if (!pointCloud) {
+            dropzone.classList.remove('hidden');
+        }
     }
 }
 
@@ -2689,6 +2750,10 @@ initGUI();
         console.warn('🟡 [WARNING] No models available. User can still load custom files.');
         console.warn('🟡 [WARNING] modelsLoaded:', modelsLoaded);
         console.warn('🟡 [WARNING] defaultScenes.length:', defaultScenes.length);
+        // Show dropzone if no models are available
+        if (!pointCloud) {
+            dropzone.classList.remove('hidden');
+        }
         // Hide or disable scene selector if no models
         if (selectedSceneCtrl) {
             console.log('🟢 [DEBUG] Disabling scene selector...');
