@@ -85,8 +85,6 @@ const params = {
     maxPoints: 0, // Maximum points (filter control)
     pointPercent: 100, // Percentage of points (0-100)
     estimatedFileSize: '—', // Estimated file size for current point count
-    // Performance
-    currentFPS: 60, // Current FPS (read-only, updated by stats)
     // Display
     pointSize: 0.03,
     opacity: 1,
@@ -155,15 +153,9 @@ let maxPointsCtrl = null;
 let pointPercentCtrl = null;
 let estimatedFileSizeCtrl = null;
 let selectedSceneCtrl = null;
-let performanceFolder = null;
 
-// Performance monitoring
+// Performance monitoring - Stats.js only
 let stats = null;
-let fpsHistory = [];
-const FPS_HISTORY_SIZE = 100; // Keep last 100 FPS values
-let fpsCanvas = null;
-let fpsCanvasCtx = null;
-let lastTime = performance.now();
 
 // ==================== File Loading ====================
 
@@ -1061,15 +1053,6 @@ function initGUI() {
         }
     }
     
-    // Create FPS history canvas
-    if (!fpsCanvas) {
-        fpsCanvas = document.createElement('canvas');
-        fpsCanvas.width = 200;
-        fpsCanvas.height = 80;
-        fpsCanvas.style.cssText = 'background: rgba(26,26,46,0.9); border: 1px solid #444; border-radius: 4px;';
-        fpsCanvasCtx = fpsCanvas.getContext('2d');
-    }
-    
     // Create new GUI
     gui = new GUI({ autoPlace: true });
     gui.domElement.style.position = 'fixed';
@@ -1386,52 +1369,6 @@ function initGUI() {
     });
     
     animFolder.open();
-    
-    // Performance monitoring folder
-    performanceFolder = gui.addFolder('Performance');
-    
-    // Current FPS display (read-only)
-    const fpsCtrl = performanceFolder.add(params, 'currentFPS').name('FPS').listen();
-    fpsCtrl.domElement.style.pointerEvents = 'none';
-    
-    // FPS history graph - add as custom element
-    if (fpsCanvas && performanceFolder) {
-        try {
-            // Use the folder's controllersContainer property if available
-            // Otherwise, access the DOM directly
-            const folderElement = performanceFolder.domElement || performanceFolder.$container;
-            
-            if (folderElement) {
-                // Find the ul element inside the folder
-                const folderUl = folderElement.querySelector('ul');
-                
-                if (folderUl) {
-                    // Add FPS graph container
-                    const fpsGraphContainer = document.createElement('div');
-                    fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0; padding: 4px;';
-                    fpsGraphContainer.appendChild(fpsCanvas);
-                    
-                    const graphLi = document.createElement('li');
-                    graphLi.className = 'lil-gui';
-                    graphLi.appendChild(fpsGraphContainer);
-                    folderUl.appendChild(graphLi);
-                } else {
-                    // Fallback: try to find any container in the folder
-                    const container = folderElement.querySelector('.children') || folderElement;
-                    if (container && container.appendChild) {
-                        const fpsGraphContainer = document.createElement('div');
-                        fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0; padding: 4px;';
-                        fpsGraphContainer.appendChild(fpsCanvas);
-                        container.appendChild(fpsGraphContainer);
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('Error adding FPS graph to GUI:', error);
-        }
-    }
-    
-    performanceFolder.open();
     
 }
 
@@ -2134,28 +2071,6 @@ function animate() {
     // Update stats
     if (stats) {
         stats.update();
-    }
-    
-    // Calculate and update FPS
-    const currentTime = performance.now();
-    const deltaTime = currentTime - lastTime;
-    const currentFPS = Math.round(1000 / deltaTime);
-    lastTime = currentTime;
-    
-    // Update FPS history
-    if (fpsHistory.length >= FPS_HISTORY_SIZE) {
-        fpsHistory.shift(); // Remove oldest value
-    }
-    fpsHistory.push(currentFPS);
-    
-    // Update params for GUI display
-    if (params.currentFPS !== undefined) {
-        params.currentFPS = currentFPS;
-    }
-    
-    // Draw FPS history graph
-    if (fpsCanvasCtx && fpsHistory.length > 1) {
-        drawFPSGraph();
     }
     
     // Update point size and opacity uniforms for shader material
