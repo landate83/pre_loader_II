@@ -3,7 +3,26 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.js';
-import Stats from 'https://cdn.jsdelivr.net/npm/stats.js@0.17.0/src/Stats.js';
+
+// Load Stats.js dynamically (it's not ES6 module compatible)
+let Stats = null;
+(async () => {
+    try {
+        const statsModule = await import('https://cdn.jsdelivr.net/npm/stats.js@0.17.0/src/Stats.js');
+        Stats = statsModule.default || statsModule.Stats || statsModule;
+        console.log('Stats.js loaded successfully');
+    } catch (err) {
+        console.error('Failed to load Stats.js:', err);
+        // Fallback: try loading as script
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js';
+        script.onload = () => {
+            Stats = window.Stats;
+            console.log('Stats.js loaded via script tag');
+        };
+        document.head.appendChild(script);
+    }
+})();
 
 // Load MeshoptDecoder dynamically to ensure it's ready
 let MeshoptDecoder = null;
