@@ -1395,25 +1395,29 @@ function initGUI() {
     fpsCtrl.domElement.style.pointerEvents = 'none';
     
     // FPS history graph - add as custom element
-    // Use a dummy controller to get the folder's container
-    const dummyCtrl = performanceFolder.add({ dummy: '' }, 'dummy').name('');
-    const folderContainer = dummyCtrl.domElement.parentElement;
-    dummyCtrl.destroy(); // Remove the dummy controller
-    
-    // Add FPS graph container
-    const fpsGraphContainer = document.createElement('div');
-    fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0; padding: 4px;';
-    fpsGraphContainer.appendChild(fpsCanvas);
-    
-    // Find the ul element in the folder
-    const folderUl = folderContainer.querySelector('ul');
-    if (folderUl) {
-        const graphLi = document.createElement('li');
-        graphLi.appendChild(fpsGraphContainer);
-        folderUl.appendChild(graphLi);
-    } else {
-        // Fallback: append directly to folder container
-        folderContainer.appendChild(fpsGraphContainer);
+    if (fpsCanvas) {
+        // Use a dummy controller to get the folder's container
+        const dummyCtrl = performanceFolder.add({ dummy: '' }, 'dummy').name('');
+        const folderContainer = dummyCtrl.domElement ? dummyCtrl.domElement.parentElement : null;
+        dummyCtrl.destroy(); // Remove the dummy controller
+        
+        if (folderContainer) {
+            // Add FPS graph container
+            const fpsGraphContainer = document.createElement('div');
+            fpsGraphContainer.style.cssText = 'width: 200px; height: 80px; margin: 8px 0; padding: 4px;';
+            fpsGraphContainer.appendChild(fpsCanvas);
+            
+            // Find the ul element in the folder
+            const folderUl = folderContainer.querySelector('ul');
+            if (folderUl) {
+                const graphLi = document.createElement('li');
+                graphLi.appendChild(fpsGraphContainer);
+                folderUl.appendChild(graphLi);
+            } else if (folderContainer.appendChild) {
+                // Fallback: append directly to folder container
+                folderContainer.appendChild(fpsGraphContainer);
+            }
+        }
     }
     
     performanceFolder.open();
