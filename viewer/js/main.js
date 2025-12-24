@@ -1064,14 +1064,18 @@ function initGUI() {
     }
     
     // Initialize Stats.js for FPS monitoring
-    if (!stats) {
-        stats = new Stats();
-        stats.showPanel(0); // 0: fps, 1: ms, 2: mb
-        stats.dom.style.position = 'fixed';
-        stats.dom.style.top = '20px';
-        stats.dom.style.left = '20px';
-        stats.dom.style.zIndex = '100';
-        document.body.appendChild(stats.dom);
+    if (!stats && Stats) {
+        try {
+            stats = new Stats();
+            stats.showPanel(0); // 0: fps, 1: ms, 2: mb
+            stats.dom.style.position = 'fixed';
+            stats.dom.style.top = '20px';
+            stats.dom.style.left = '20px';
+            stats.dom.style.zIndex = '100';
+            document.body.appendChild(stats.dom);
+        } catch (error) {
+            console.error('Failed to initialize Stats.js:', error);
+        }
     }
     
     // Create FPS history canvas
