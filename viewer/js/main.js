@@ -1032,21 +1032,6 @@ function initGUI() {
         gui.destroy();
     }
     
-    // Initialize Stats.js for FPS monitoring
-    if (!stats && window.Stats) {
-        try {
-            stats = new window.Stats();
-            stats.showPanel(0); // 0: fps, 1: ms, 2: mb
-            stats.dom.style.position = 'fixed';
-            stats.dom.style.top = '20px';
-            stats.dom.style.left = '20px';
-            stats.dom.style.zIndex = '100';
-            document.body.appendChild(stats.dom);
-        } catch (error) {
-            console.error('Failed to initialize Stats.js:', error);
-        }
-    }
-    
     // Create new GUI
     gui = new GUI({ autoPlace: true });
     gui.domElement.style.position = 'fixed';
@@ -2061,11 +2046,6 @@ function updateEstimatedFileSize(pointCount) {
 
 function animate() {
     requestAnimationFrame(animate);
-    
-    // Update stats
-    if (stats) {
-        stats.update();
-    }
     
     // Update point size and opacity uniforms for shader material
     if (pointCloud && pointCloud.material && pointCloud.material.uniforms) {
