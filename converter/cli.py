@@ -11,6 +11,51 @@ from .reader import read_point_cloud
 from .downsampler import downsample_to_target
 from .exporter import export_glb, export_glb_with_draco, export_glb_with_meshopt, export_draco
 from .filter import apply_sphere_filter
+import numpy as np
+
+
+def parse_center_coordinates(center_str: str) -> str | np.ndarray:
+    """
+    Parse center coordinates from string.
+    
+    Args:
+        center_str: String with center specification:
+                   - 'origin' or 'geometric' for predefined centers
+                   - 'x,y,z' or 'x y z' for custom coordinates (three numbers)
+        
+    Returns:
+        Either string ('origin' or 'geometric') or numpy array with coordinates [x, y, z]
+        
+    Raises:
+        ValueError: If format is invalid
+    """
+    center_str = center_str.strip().lower()
+    
+    # Check for predefined centers
+    if center_str in ['origin', 'geometric']:
+        return center_str
+    
+    # Try to parse as coordinates
+    # Support both comma-separated and space-separated formats
+    if ',' in center_str:
+        parts = center_str.split(',')
+    else:
+        parts = center_str.split()
+    
+    if len(parts) != 3:
+        raise ValueError(
+            f"Invalid center format: '{center_str}'. "
+            "Expected 'origin', 'geometric', or three numbers (e.g., '1.0,2.0,3.0' or '1.0 2.0 3.0')"
+        )
+    
+    try:
+        coords = [float(p.strip()) for p in parts]
+        return np.array(coords, dtype=np.float32)
+    except ValueError as e:
+        raise ValueError(
+            f"Invalid center coordinates: '{center_str}'. "
+            "All three values must be numbers."
+        ) from e
 
 
 def parse_size(s: str) -> int:
@@ -176,7 +221,19 @@ def generate_output_filename(
         
         # Add center type if not origin (to keep filenames shorter, origin is default)
         if filter_center != 'origin':
-            parts.append(f"_center_{filter_center}")
+            # Try to parse center to determine if it's custom coordinates
+            try:
+                parsed_center = parse_center_coordinates(filter_center)
+                if isinstance(parsed_center, np.ndarray):
+                    # Custom coordinates: format as _center_x_y_z (rounded to 1 decimal)
+                    center_str = f"{parsed_center[0]:.1f}_{parsed_center[1]:.1f}_{parsed_center[2]:.1f}"
+                    parts.append(f"_center_{center_str}")
+                else:
+                    # Predefined center (geometric)
+                    parts.append(f"_center_{parsed_center}")
+            except ValueError:
+                # If parsing fails, use original string (shouldn't happen in normal flow)
+                parts.append(f"_center_{filter_center}")
     
     if percent is not None:
         # Format percent: integer without decimal, decimal with parentheses
@@ -241,7 +298,7 @@ def interactive_mode(input_file: str):
     click.echo(f"    --filter-sphere: Filter points within a sphere (mutually exclusive with --filter-hemisphere)")
     click.echo(f"    --filter-hemisphere: Filter points within a hemisphere (mutually exclusive with --filter-sphere)")
     click.echo(f"    --filter-radius R: Filter radius in relative units (0.0-1.0 = 0%%-100%% of bounding box diagonal, can be >1.0)")
-    click.echo(f"    --filter-center CENTER: Filter center - 'origin' (0,0,0) or 'geometric' (centroid), default: origin")
+    click.echo(f"    --filter-center CENTER: Filter center - 'origin' (0,0,0), 'geometric' (centroid), or custom coordinates (x,y,z or x y z), default: origin")
     click.echo(f"  exit: Exit interactive mode")
     click.echo(f"\nExamples:")
     click.echo(f"  extract --points 10000")
@@ -262,6 +319,8 @@ def interactive_mode(input_file: str):
     click.echo(f"    → Filters to sphere (50%% of diagonal, center at origin), then downsamples to 10000 points")
     click.echo(f"  extract --filter-hemisphere --filter-radius 0.3 --filter-center geometric --percent 10")
     click.echo(f"    → Filters to hemisphere (30%% of diagonal, geometric center), then downsamples to 10%%")
+    click.echo(f"  extract --filter-sphere --filter-radius 0.4 --filter-center \"10.5,20.3,5.0\" --points 5000")
+    click.echo(f"    → Filters to sphere (40%% of diagonal, center at (10.5, 20.3, 5.0)), then downsamples to 5000 points")
     click.echo("")
     
     while True:
@@ -324,9 +383,12 @@ def interactive_mode(input_file: str):
                         filter_radius = float(parts[i + 1])
                         i += 2
                     elif parts[i] == '--filter-center' and i + 1 < len(parts):
-                        filter_center = parts[i + 1].lower()
-                        if filter_center not in ['origin', 'geometric']:
-                            click.echo(f"Error: --filter-center must be 'origin' or 'geometric'", err=True)
+                        filter_center = parts[i + 1]
+                        # Validate center format
+                        try:
+                            parse_center_coordinates(filter_center)
+                        except ValueError as e:
+                            click.echo(f"Error: {e}", err=True)
                             break
                         i += 2
                     elif not parts[i].startswith('--'):
@@ -426,13 +488,21 @@ def _process_extraction(
     filter_info = None
     if filter_sphere or filter_hemisphere:
         filter_type = 'sphere' if filter_sphere else 'hemisphere'
+        
+        # Parse center coordinates
+        try:
+            parsed_center = parse_center_coordinates(filter_center)
+        except ValueError as e:
+            raise click.ClickException(f"Invalid filter center: {e}")
+        
         if not show_progress:
-            click.echo(f"Applying {filter_type} filter (radius: {filter_radius}, center: {filter_center})...")
+            center_display = filter_center if isinstance(parsed_center, str) else f"({parsed_center[0]:.2f}, {parsed_center[1]:.2f}, {parsed_center[2]:.2f})"
+            click.echo(f"Applying {filter_type} filter (radius: {filter_radius}, center: {center_display})...")
         
         pts, cols, filter_info = apply_sphere_filter(
             pts, cols,
             filter_type=filter_type,
-            center_type=filter_center,
+            center_type=parsed_center,
             radius_relative=filter_radius,
             up_axis='y'  # Y-up for hemisphere
         )
@@ -638,7 +708,7 @@ def _process_extraction(
 @click.option('--filter-sphere', is_flag=True, help='Filter points within a sphere (mutually exclusive with --filter-hemisphere)')
 @click.option('--filter-hemisphere', is_flag=True, help='Filter points within a hemisphere (mutually exclusive with --filter-sphere)')
 @click.option('--filter-radius', type=float, help='Filter radius in relative units (0.0-1.0 = 0%%-100%% of bounding box diagonal, can be >1.0)')
-@click.option('--filter-center', type=click.Choice(['origin', 'geometric'], case_sensitive=False), default='origin', help='Filter center: origin (0,0,0) or geometric (centroid)')
+@click.option('--filter-center', type=str, default='origin', help='Filter center: origin (0,0,0), geometric (centroid), or custom coordinates (x,y,z or x y z)')
 @click.option('-v', '--verbose', is_flag=True, help='Verbose output')
 def main(input_file: str, output: str, points: int, size: str, percent: float, draco: bool, meshopt: bool, quant: bool, filter_sphere: bool, filter_hemisphere: bool, filter_radius: float, filter_center: str, verbose: bool):
     """
@@ -721,13 +791,21 @@ def main(input_file: str, output: str, points: int, size: str, percent: float, d
     filter_info = None
     if filter_sphere or filter_hemisphere:
         filter_type = 'sphere' if filter_sphere else 'hemisphere'
+        
+        # Parse center coordinates
+        try:
+            parsed_center = parse_center_coordinates(filter_center)
+        except ValueError as e:
+            raise click.ClickException(f"Invalid filter center: {e}")
+        
         if verbose:
-            click.echo(f"Applying {filter_type} filter (radius: {filter_radius}, center: {filter_center})...")
+            center_display = filter_center if isinstance(parsed_center, str) else f"({parsed_center[0]:.2f}, {parsed_center[1]:.2f}, {parsed_center[2]:.2f})"
+            click.echo(f"Applying {filter_type} filter (radius: {filter_radius}, center: {center_display})...")
         
         pts, cols, filter_info = apply_sphere_filter(
             pts, cols,
             filter_type=filter_type,
-            center_type=filter_center,
+            center_type=parsed_center,
             radius_relative=filter_radius,
             up_axis='y'  # Y-up for hemisphere
         )

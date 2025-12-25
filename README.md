@@ -52,13 +52,28 @@ The utility supports three output formats:
 - `-o, --output` - Output file path (optional, `.glb` or `.drc`)
   - If omitted, file is auto-generated in the same directory as input file
   - Auto-generated name format: `<input_name>_<params>.glb`
-  - Parameters in filename: `_prcnt_<value>`, `_size_<value>`, `_pnts_<value>`, `_draco`
-  - Percent format: integer `_prcnt_100` or decimal `_prcnt_100(5)` for 100.5
+  - Parameters in filename: 
+    - `_prcnt_<value>` - percentage (integer `_prcnt_100` or decimal `_prcnt_100(5)` for 100.5)
+    - `_size_<value>` - target file size
+    - `_pnts_<value>` - target number of points
+    - `_filtersphere_r[xxxx]` or `_filterhemisphere_r[xxxx]` - filter type and radius (4-digit percentage, e.g., `r0050` for 0.5)
+    - `_center_<type>` - filter center (`origin`, `geometric`, or `x_y_z` for custom coordinates)
+    - `_draco` - Draco compression
+    - `_meshopt` - Meshoptimizer compression
+    - `_quant` - KHR_mesh_quantization
 - `--points` - Target number of points after downsampling
 - `--size` - Target file size (e.g., "500kb", "10mb", "1gb", "500" - defaults to kb if no unit specified)
 - `--percent` - Target percentage of source points (0-100)
-- `--draco` - Apply Draco compression to GLB output (only for `.glb` files, automatically disables quantization)
-- `--quant` - Use KHR_mesh_quantization for GLB (disabled by default, automatically disabled with `--draco`)
+- `--draco` - Apply Draco compression to GLB output (only for `.glb` files, mutually exclusive with `--meshopt`, automatically disables quantization)
+- `--meshopt` - Apply Meshoptimizer compression to GLB output (only for `.glb` files, mutually exclusive with `--draco`, requires quantization)
+- `--quant` - Use KHR_mesh_quantization for GLB (disabled by default, automatically disabled with `--draco`, required with `--meshopt`)
+- `--filter-sphere` - Filter points within a sphere before downsampling (mutually exclusive with `--filter-hemisphere`)
+- `--filter-hemisphere` - Filter points within a hemisphere before downsampling (mutually exclusive with `--filter-sphere`)
+- `--filter-radius FLOAT` - Filter radius in relative units (0.0-1.0 = 0%-100% of bounding box diagonal, can be >1.0). Required when using `--filter-sphere` or `--filter-hemisphere`
+- `--filter-center CENTER` - Filter center specification:
+  - `origin` - Use origin (0, 0, 0) as center (default)
+  - `geometric` - Use geometric center (centroid) of the point cloud
+  - `x,y,z` or `x y z` - Use custom coordinates (three numbers, comma or space separated)
 - `-v, --verbose` - Verbose output
 
 ### Examples
@@ -91,6 +106,20 @@ python -m converter.cli model.ply -o model.drc --points 50000 -v
 
 # Downsample to 2MB file size
 python -m converter.cli large.sog -o compact.glb --size 2mb
+
+# GLB with Meshoptimizer compression (requires quantization)
+python -m converter.cli model.ply -o model.glb --points 10000 --meshopt -v
+# Creates: model_pnts_10000_meshopt.glb (quantization auto-enabled)
+
+# Filter by sphere (50% of diagonal, center at origin) then downsample
+python -m converter.cli input.ply -o output.glb --filter-sphere --filter-radius 0.5 --filter-center origin --points 10000 -v
+
+# Filter by hemisphere (30% of diagonal, geometric center) then downsample
+python -m converter.cli input.ply -o output.glb --filter-hemisphere --filter-radius 0.3 --filter-center geometric --percent 10 -v
+
+# Filter by sphere with custom center coordinates
+python -m converter.cli input.ply -o output.glb --filter-sphere --filter-radius 0.4 --filter-center "10.5,20.3,5.0" --points 5000 -v
+# Creates: output_filtersphere_r0040_center_10.5_20.3_5.0_pnts_5000.glb
 
 # Interactive mode (no parameters)
 python -m converter.cli scene.ply
@@ -130,7 +159,16 @@ In interactive mode:
   → Creates: model_size_1000.glb (1000 KB)
 
 > extract --points 5000 --quant
-  → Creates: model_pnts_5000.glb with KHR_mesh_quantization
+  → Creates: model_pnts_5000_quant.glb with KHR_mesh_quantization
+
+> extract --filter-sphere --filter-radius 0.5 --filter-center origin --points 10000
+  → Filters to sphere (50% of diagonal, center at origin), then downsamples to 10000 points
+
+> extract --filter-hemisphere --filter-radius 0.3 --filter-center geometric --percent 10
+  → Filters to hemisphere (30% of diagonal, geometric center), then downsamples to 10%
+
+> extract --filter-sphere --filter-radius 0.4 --filter-center "10.5,20.3,5.0" --points 5000
+  → Filters to sphere (40% of diagonal, center at (10.5, 20.3, 5.0)), then downsamples to 5000 points
 
 > exit
 ```
@@ -140,11 +178,18 @@ In interactive mode:
 - **Downsampling algorithm**: Voxel Grid Nearest - preserves original point coordinates (does not average them)
 - **Multiple output formats**: 
   - GLB (with optional Draco compression via `--draco` flag)
+  - GLB with Meshoptimizer compression (via `--meshopt` flag, requires quantization)
   - Pure Draco format (.drc) - automatically compressed using [Draco library](https://google.github.io/draco/)
 - **Format support**: .ply (with RGB colors) and .sog (Gaussian Splatting with Spherical Harmonics)
 - **Size optimization**: 
   - KHR_mesh_quantization available via `--quant` flag for GLB (reduces file size by ~50%)
   - Automatically disabled when using Draco compression (Draco handles its own compression)
+  - Required when using Meshoptimizer compression
+- **Point cloud filtering**: Filter points before downsampling using sphere or hemisphere:
+  - `--filter-sphere` - Filter points within a sphere
+  - `--filter-hemisphere` - Filter points within a hemisphere (Y-up)
+  - `--filter-radius` - Radius in relative units (0.0-1.0 = 0%-100% of bounding box diagonal)
+  - `--filter-center` - Center: `origin` (0,0,0), `geometric` (centroid), or custom coordinates (x,y,z)
 - **Auto-generated filenames**: Output filename is optional - automatically generated based on input name and parameters
 - **Progress indicators**: Visual progress bars during downsampling (both CLI and interactive modes)
 - **Interactive mode**: User-friendly interactive interface for exploring and converting point clouds
@@ -158,7 +203,8 @@ pre_loader_II/
 │   ├── cli.py          # CLI interface
 │   ├── reader.py        # Read .ply and .sog files
 │   ├── downsampler.py  # Point cloud downsampling
-│   └── exporter.py      # Export to GLB with Draco
+│   ├── filter.py        # Sphere/hemisphere filtering
+│   └── exporter.py      # Export to GLB with Draco/Meshoptimizer
 ├── viewer/             # Web viewer (in development)
 ├── tests/              # Tests (in development)
 ├── requirements.txt

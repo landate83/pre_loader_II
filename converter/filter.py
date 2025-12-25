@@ -111,7 +111,7 @@ def apply_sphere_filter(
     points: np.ndarray,
     colors: np.ndarray,
     filter_type: Literal['sphere', 'hemisphere'],
-    center_type: Literal['origin', 'geometric'],
+    center_type: str | np.ndarray,
     radius_relative: float,
     up_axis: Literal['y', 'z'] = 'y'
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
@@ -125,7 +125,7 @@ def apply_sphere_filter(
         points: Array of shape (N, 3) with point coordinates
         colors: Array of shape (N, 3) with point colors
         filter_type: 'sphere' or 'hemisphere'
-        center_type: 'origin' for (0,0,0) or 'geometric' for centroid
+        center_type: 'origin' for (0,0,0), 'geometric' for centroid, or array [x, y, z] for custom center
         radius_relative: Radius in relative units (0.0-1.0 = 0%-100% of bbox diagonal)
         up_axis: 'y' for Y-up or 'z' for Z-up (only for hemisphere)
         
@@ -136,7 +136,10 @@ def apply_sphere_filter(
     points_before = len(points)
     
     # Calculate center
-    if center_type == 'origin':
+    if isinstance(center_type, np.ndarray):
+        # Custom center coordinates provided
+        center = center_type.astype(np.float32)
+    elif center_type == 'origin':
         center = np.array([0.0, 0.0, 0.0], dtype=np.float32)
     else:  # center_type == 'geometric'
         center = calculate_geometric_center(points)
