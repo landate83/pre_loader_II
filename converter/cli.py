@@ -10,6 +10,7 @@ from pathlib import Path
 from .reader import read_point_cloud
 from .downsampler import downsample_to_target
 from .exporter import export_glb, export_glb_with_draco, export_glb_with_meshopt, export_draco
+from .filter import apply_sphere_filter
 
 
 def parse_size(s: str) -> int:
@@ -134,13 +135,18 @@ def generate_output_filename(
     percent: float = None,
     draco: bool = False,
     meshopt: bool = False,
-    quant_explicit: bool = False
+    quant_explicit: bool = False,
+    filter_sphere: bool = False,
+    filter_hemisphere: bool = False,
+    filter_radius: float = None,
+    filter_center: str = 'origin'
 ) -> str:
     """
     Generate output filename based on input file and parameters.
     
     Format: <input_name>_<params>.glb
     Params: _prcnt_<value>, _size_<value>, _pnts_<value>, _draco, _meshopt, _quant
+    Filter params: _sphere_<radius> or _hemisphere_<radius>, _center_<origin|geometric>
     
     For percent values:
     - Integer: _prcnt_100
@@ -153,6 +159,24 @@ def generate_output_filename(
     input_stem = input_path.stem.rstrip('_')  # Remove trailing underscores
     
     parts = [input_stem]
+    
+    # Add filter information before downsampling parameters
+    if filter_sphere or filter_hemisphere:
+        # Format: _filtersphere or _filterhemisphere
+        filter_type = 'filtersphere' if filter_sphere else 'filterhemisphere'
+        parts.append(f"_{filter_type}")
+        
+        # Format radius: _r[xxxx] where xxxx is the radius as percentage (4 digits)
+        # Examples: 0.5 -> r0050, 0.33 -> r0033, 1.0 -> r0100, 1.5 -> r0150
+        if filter_radius is not None:
+            # Convert to percentage and format as 4 digits
+            radius_percent = int(filter_radius * 100)
+            radius_str = f"r{radius_percent:04d}"
+            parts.append(f"_{radius_str}")
+        
+        # Add center type if not origin (to keep filenames shorter, origin is default)
+        if filter_center != 'origin':
+            parts.append(f"_center_{filter_center}")
     
     if percent is not None:
         # Format percent: integer without decimal, decimal with parentheses
@@ -205,7 +229,7 @@ def interactive_mode(input_file: str):
     click.echo(f"  Points: {source_count:,}")
     click.echo(f"  File size: {format_file_size(source_size)}")
     click.echo(f"\nCommands:")
-    click.echo(f"  extract [<output>] [--points N | --size SIZE | --percent P] [--draco | --meshopt] [--quant]")
+    click.echo(f"  extract [<output>] [--points N | --size SIZE | --percent P] [--draco | --meshopt] [--quant] [--filter-sphere | --filter-hemisphere] [--filter-radius R] [--filter-center CENTER]")
     click.echo(f"    Extract point cloud with specified parameters")
     click.echo(f"    <output>: Output file path (optional, auto-generated if omitted)")
     click.echo(f"    --points N: Target number of points")
@@ -214,6 +238,10 @@ def interactive_mode(input_file: str):
     click.echo(f"    --draco: Apply Draco compression (for .glb files, disables quantization, mutually exclusive with --meshopt)")
     click.echo(f"    --meshopt: Apply Meshoptimizer compression (for .glb files, requires quantization, mutually exclusive with --draco)")
     click.echo(f"    --quant: Use KHR_mesh_quantization (disabled by default, automatically disabled with --draco, required with --meshopt)")
+    click.echo(f"    --filter-sphere: Filter points within a sphere (mutually exclusive with --filter-hemisphere)")
+    click.echo(f"    --filter-hemisphere: Filter points within a hemisphere (mutually exclusive with --filter-sphere)")
+    click.echo(f"    --filter-radius R: Filter radius in relative units (0.0-1.0 = 0%%-100%% of bounding box diagonal, can be >1.0)")
+    click.echo(f"    --filter-center CENTER: Filter center - 'origin' (0,0,0) or 'geometric' (centroid), default: origin")
     click.echo(f"  exit: Exit interactive mode")
     click.echo(f"\nExamples:")
     click.echo(f"  extract --points 10000")
@@ -230,6 +258,10 @@ def interactive_mode(input_file: str):
     click.echo(f"    → Creates: {input_path.parent / (input_path.stem.rstrip('_') + '_prcnt_5(5).glb')}")
     click.echo(f"  extract custom_output.glb --points 5000")
     click.echo(f"    → Creates: custom_output.glb with 5000 points")
+    click.echo(f"  extract --filter-sphere --filter-radius 0.5 --filter-center origin --points 10000")
+    click.echo(f"    → Filters to sphere (50%% of diagonal, center at origin), then downsamples to 10000 points")
+    click.echo(f"  extract --filter-hemisphere --filter-radius 0.3 --filter-center geometric --percent 10")
+    click.echo(f"    → Filters to hemisphere (30%% of diagonal, geometric center), then downsamples to 10%%")
     click.echo("")
     
     while True:
@@ -256,6 +288,10 @@ def interactive_mode(input_file: str):
                 meshopt = False
                 quant = False  # Default: disabled
                 quant_explicit = False  # Track if quant was explicitly requested
+                filter_sphere = False
+                filter_hemisphere = False
+                filter_radius = None
+                filter_center = 'origin'
                 
                 i = 0
                 while i < len(parts):
@@ -278,6 +314,21 @@ def interactive_mode(input_file: str):
                         quant = True
                         quant_explicit = True  # User explicitly requested quantization
                         i += 1
+                    elif parts[i] == '--filter-sphere':
+                        filter_sphere = True
+                        i += 1
+                    elif parts[i] == '--filter-hemisphere':
+                        filter_hemisphere = True
+                        i += 1
+                    elif parts[i] == '--filter-radius' and i + 1 < len(parts):
+                        filter_radius = float(parts[i + 1])
+                        i += 2
+                    elif parts[i] == '--filter-center' and i + 1 < len(parts):
+                        filter_center = parts[i + 1].lower()
+                        if filter_center not in ['origin', 'geometric']:
+                            click.echo(f"Error: --filter-center must be 'origin' or 'geometric'", err=True)
+                            break
+                        i += 2
                     elif not parts[i].startswith('--'):
                         # This is likely the output filename
                         output = parts[i]
@@ -289,6 +340,23 @@ def interactive_mode(input_file: str):
                 # Validate compression options (mutually exclusive)
                 if draco and meshopt:
                     click.echo("Error: Cannot use both --draco and --meshopt. Choose one compression method or none.", err=True)
+                    continue
+                
+                # Validate filter options
+                if filter_sphere and filter_hemisphere:
+                    click.echo("Error: Cannot use both --filter-sphere and --filter-hemisphere. Choose one filter type or none.", err=True)
+                    continue
+                
+                if (filter_sphere or filter_hemisphere) and filter_radius is None:
+                    click.echo("Error: Filter radius (--filter-radius) is required when using --filter-sphere or --filter-hemisphere.", err=True)
+                    continue
+                
+                if filter_radius is not None and not filter_sphere and not filter_hemisphere:
+                    click.echo("Error: Filter type (--filter-sphere or --filter-hemisphere) is required when using --filter-radius.", err=True)
+                    continue
+                
+                if filter_radius is not None and filter_radius <= 0:
+                    click.echo("Error: Filter radius must be greater than 0.", err=True)
                     continue
                 
                 # Check for quantization + draco conflict
@@ -306,7 +374,8 @@ def interactive_mode(input_file: str):
                 # Generate output filename if not specified
                 if not output:
                     output = generate_output_filename(
-                        input_file, points, size, percent, draco, meshopt, quant_explicit
+                        input_file, points, size, percent, draco, meshopt, quant_explicit,
+                        filter_sphere, filter_hemisphere, filter_radius, filter_center
                     )
                     click.echo(f"Auto-generated output: {output}")
                 
@@ -326,7 +395,8 @@ def interactive_mode(input_file: str):
                 # Process extraction
                 try:
                     _process_extraction(
-                        pts, cols, output, points, size, draco, meshopt, source_count, True, quant
+                        pts, cols, output, points, size, draco, meshopt, source_count, True, quant,
+                        filter_sphere, filter_hemisphere, filter_radius, filter_center
                     )
                 except Exception as e:
                     click.echo(f"Error: {e}", err=True)
@@ -344,11 +414,36 @@ def interactive_mode(input_file: str):
 
 def _process_extraction(
     pts, cols, output: str, points: int, size: str, draco: bool, meshopt: bool, source_count: int, 
-    show_progress: bool = False, quant: bool = False
+    show_progress: bool = False, quant: bool = False,
+    filter_sphere: bool = False, filter_hemisphere: bool = False, 
+    filter_radius: float = None, filter_center: str = 'origin'
 ):
     """Process point cloud extraction with given parameters."""
     if not show_progress:
         click.echo(f"\nProcessing extraction...")
+    
+    # Apply filtering if specified (before downsampling)
+    filter_info = None
+    if filter_sphere or filter_hemisphere:
+        filter_type = 'sphere' if filter_sphere else 'hemisphere'
+        if not show_progress:
+            click.echo(f"Applying {filter_type} filter (radius: {filter_radius}, center: {filter_center})...")
+        
+        pts, cols, filter_info = apply_sphere_filter(
+            pts, cols,
+            filter_type=filter_type,
+            center_type=filter_center,
+            radius_relative=filter_radius,
+            up_axis='y'  # Y-up for hemisphere
+        )
+        
+        if not show_progress:
+            click.echo(f"After filtering: {filter_info['points_after']:,} points (removed {filter_info['points_before'] - filter_info['points_after']:,})")
+            click.echo(f"Filter center: ({filter_info['center'][0]:.2f}, {filter_info['center'][1]:.2f}, {filter_info['center'][2]:.2f})")
+            click.echo(f"Filter radius: {filter_info['radius_absolute']:.2f} (relative: {filter_info['radius_relative']:.2%})")
+        
+        # Update source_count to reflect filtered points
+        source_count = len(pts)
     
     # Downsample if needed
     target_size_bytes = None
@@ -540,8 +635,12 @@ def _process_extraction(
 @click.option('--draco', is_flag=True, help='Apply Draco compression to GLB output (only for .glb files, mutually exclusive with --meshopt)')
 @click.option('--meshopt', is_flag=True, help='Apply Meshoptimizer compression to GLB output (only for .glb files, requires quantization, mutually exclusive with --draco)')
 @click.option('--quant', is_flag=True, help='Use KHR_mesh_quantization for GLB (disabled by default, automatically disabled with --draco, required with --meshopt)')
+@click.option('--filter-sphere', is_flag=True, help='Filter points within a sphere (mutually exclusive with --filter-hemisphere)')
+@click.option('--filter-hemisphere', is_flag=True, help='Filter points within a hemisphere (mutually exclusive with --filter-sphere)')
+@click.option('--filter-radius', type=float, help='Filter radius in relative units (0.0-1.0 = 0%%-100%% of bounding box diagonal, can be >1.0)')
+@click.option('--filter-center', type=click.Choice(['origin', 'geometric'], case_sensitive=False), default='origin', help='Filter center: origin (0,0,0) or geometric (centroid)')
 @click.option('-v', '--verbose', is_flag=True, help='Verbose output')
-def main(input_file: str, output: str, points: int, size: str, percent: float, draco: bool, meshopt: bool, quant: bool, verbose: bool):
+def main(input_file: str, output: str, points: int, size: str, percent: float, draco: bool, meshopt: bool, quant: bool, filter_sphere: bool, filter_hemisphere: bool, filter_radius: float, filter_center: str, verbose: bool):
     """
     Convert point cloud files (.ply, .sog) to GLB or Draco format.
     
@@ -567,6 +666,19 @@ def main(input_file: str, output: str, points: int, size: str, percent: float, d
     if draco and meshopt:
         raise click.ClickException("Cannot use both --draco and --meshopt. Choose one compression method or none.")
     
+    # Validate filter options
+    if filter_sphere and filter_hemisphere:
+        raise click.ClickException("Cannot use both --filter-sphere and --filter-hemisphere. Choose one filter type or none.")
+    
+    if (filter_sphere or filter_hemisphere) and filter_radius is None:
+        raise click.ClickException("Filter radius (--filter-radius) is required when using --filter-sphere or --filter-hemisphere.")
+    
+    if filter_radius is not None and not filter_sphere and not filter_hemisphere:
+        raise click.ClickException("Filter type (--filter-sphere or --filter-hemisphere) is required when using --filter-radius.")
+    
+    if filter_radius is not None and filter_radius <= 0:
+        raise click.ClickException("Filter radius must be greater than 0.")
+    
     # Track if quant was explicitly requested (before auto-enabling for meshopt)
     quant_explicit = quant
     
@@ -584,7 +696,10 @@ def main(input_file: str, output: str, points: int, size: str, percent: float, d
     
     # Generate output filename if not specified
     if not output:
-        output = generate_output_filename(input_file, points, size, percent, draco, meshopt, quant_explicit)
+        output = generate_output_filename(
+            input_file, points, size, percent, draco, meshopt, quant_explicit,
+            filter_sphere, filter_hemisphere, filter_radius, filter_center
+        )
         if verbose:
             click.echo(f"Auto-generated output: {output}")
     
@@ -601,6 +716,29 @@ def main(input_file: str, output: str, points: int, size: str, percent: float, d
     
     if verbose:
         click.echo(f"Source points: {source_count:,}")
+    
+    # Apply filtering if specified (before downsampling)
+    filter_info = None
+    if filter_sphere or filter_hemisphere:
+        filter_type = 'sphere' if filter_sphere else 'hemisphere'
+        if verbose:
+            click.echo(f"Applying {filter_type} filter (radius: {filter_radius}, center: {filter_center})...")
+        
+        pts, cols, filter_info = apply_sphere_filter(
+            pts, cols,
+            filter_type=filter_type,
+            center_type=filter_center,
+            radius_relative=filter_radius,
+            up_axis='y'  # Y-up for hemisphere
+        )
+        
+        if verbose:
+            click.echo(f"After filtering: {filter_info['points_after']:,} points (removed {filter_info['points_before'] - filter_info['points_after']:,})")
+            click.echo(f"Filter center: ({filter_info['center'][0]:.2f}, {filter_info['center'][1]:.2f}, {filter_info['center'][2]:.2f})")
+            click.echo(f"Filter radius: {filter_info['radius_absolute']:.2f} (relative: {filter_info['radius_relative']:.2%})")
+        
+        # Update source_count to reflect filtered points
+        source_count = len(pts)
     
     # Calculate target points from percent if specified
     if percent is not None:
