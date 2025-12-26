@@ -664,18 +664,38 @@ function createPointCloud(positionAttr, colorAttr) {
     if (colorAttr) {
         // If it's already a BufferAttribute, clone it properly
         if (colorAttr instanceof THREE.BufferAttribute) {
-            // Clone the array to avoid modifying the original
-            const colorArray = colorAttr.array.slice();
+            // Convert RGBA to RGB if needed (Three.js PointsMaterial expects RGB)
+            let colorArray;
+            let itemSize = colorAttr.itemSize;
+            
+            if (itemSize === 4) {
+                // Convert RGBA to RGB
+                const rgbaArray = colorAttr.array;
+                colorArray = new Float32Array((rgbaArray.length / 4) * 3);
+                for (let i = 0; i < rgbaArray.length; i += 4) {
+                    const rgbIdx = (i / 4) * 3;
+                    colorArray[rgbIdx] = rgbaArray[i];
+                    colorArray[rgbIdx + 1] = rgbaArray[i + 1];
+                    colorArray[rgbIdx + 2] = rgbaArray[i + 2];
+                    // Alpha is ignored
+                }
+                itemSize = 3;
+                console.log('Converted RGBA to RGB colors');
+            } else {
+                // Clone the array as-is
+                colorArray = colorAttr.array.slice();
+            }
+            
             const colorBuffer = new THREE.BufferAttribute(
                 colorArray,
-                colorAttr.itemSize,
+                itemSize,
                 colorAttr.normalized
             );
             geometry.setAttribute('color', colorBuffer);
             // Check a few sample colors
             const sampleColors = [];
             for (let i = 0; i < Math.min(5, colorBuffer.count); i++) {
-                const idx = i * 3;
+                const idx = i * itemSize;
                 sampleColors.push([colorArray[idx], colorArray[idx + 1], colorArray[idx + 2]]);
             }
             console.log('Cloned color attribute:', {
@@ -755,6 +775,14 @@ function createPointCloud(positionAttr, colorAttr) {
     scene.add(pointCloud);
     currentMaterial = material;
     
+    console.log('Point cloud added to scene:', {
+        inScene: scene.children.includes(pointCloud),
+        sceneChildrenCount: scene.children.length,
+        pointCloudVisible: pointCloud.visible,
+        materialSize: material.size,
+        materialOpacity: material.opacity
+    });
+    
     // Store original data for filtering
     originalPointCount = geometry.attributes.position.count;
     originalPositions = geometry.attributes.position.array.slice();
@@ -787,12 +815,27 @@ function createPointCloud(positionAttr, colorAttr) {
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
+    
+    console.log('Bounding box:', {
+        min: { x: box.min.x, y: box.min.y, z: box.min.z },
+        max: { x: box.max.x, y: box.max.y, z: box.max.z },
+        center: { x: center.x, y: center.y, z: center.z },
+        size: { x: size.x, y: size.y, z: size.z },
+        maxDim: maxDim
+    });
+    
     const fov = camera.fov * (Math.PI / 180);
     let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
     cameraZ *= 1.5;
     camera.position.set(center.x, center.y, center.z + cameraZ);
     controls.target.copy(center);
     controls.update();
+    
+    console.log('Camera setup:', {
+        position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+        target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+        cameraZ: cameraZ
+    });
     
     // Apply restored parameters after pointCloud is created
     const urlParams = new URLSearchParams(window.location.search);
