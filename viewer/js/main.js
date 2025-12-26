@@ -292,55 +292,55 @@ async function loadGLB(file) {
     loader.setDRACOLoader(dracoLoader);
 
     // Setup MeshoptDecoder for EXT_meshopt_compression (standard Three.js support)
+    // MUST be set before parsing any files
     try {
         const { MeshoptDecoder } = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/meshopt_decoder.module.js');
         await MeshoptDecoder.ready();
         loader.setMeshoptDecoder(MeshoptDecoder);
+        console.log('MeshoptDecoder loaded and set');
     } catch (err) {
         console.warn('MeshoptDecoder not available, files with EXT_meshopt_compression may not load:', err);
     }
     
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        const arrayBuffer = e.target.result;
+    // Read file as ArrayBuffer
+    const arrayBuffer = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => reject(new Error('Error reading file'));
+        reader.readAsArrayBuffer(file);
+    });
+    
+    // Parse GLB after decoder is set up
+    loader.parse(arrayBuffer, '', (gltf) => {
+        console.log('GLB loaded successfully:', gltf);
         
-        loader.parse(arrayBuffer, '', (gltf) => {
-            console.log('GLB loaded successfully:', gltf);
-            
-            const mesh = gltf.scene.children[0];
-            if (!mesh || !mesh.geometry) {
-                console.error('No mesh found in scene!');
-                alert('GLB file loaded but contains no mesh');
-                return;
-            }
-            
-            const geometry = mesh.geometry;
-            const positions = geometry.attributes.position;
-            if (!positions) {
-                console.error('No position attribute found!');
-                alert('GLB file loaded but contains no position data');
-                return;
-            }
-            
-            const colors = geometry.attributes.COLOR_0 || geometry.attributes.color;
-            
-            createPointCloud(positions, colors);
-            updateInfo(positions.count);
-            dropzone.classList.add('hidden');
-            if (!gui) {
-                initGUI();
-            }
-        }, (error) => {
-            console.error('Error loading GLB:', error);
-            alert('Error loading GLB file:\n' + (error.message || 'Unknown error'));
-        });
-    };
-    
-    reader.onerror = () => {
-        alert('Error reading file');
-    };
-    
-    reader.readAsArrayBuffer(file);
+        const mesh = gltf.scene.children[0];
+        if (!mesh || !mesh.geometry) {
+            console.error('No mesh found in scene!');
+            alert('GLB file loaded but contains no mesh');
+            return;
+        }
+        
+        const geometry = mesh.geometry;
+        const positions = geometry.attributes.position;
+        if (!positions) {
+            console.error('No position attribute found!');
+            alert('GLB file loaded but contains no position data');
+            return;
+        }
+        
+        const colors = geometry.attributes.COLOR_0 || geometry.attributes.color;
+        
+        createPointCloud(positions, colors);
+        updateInfo(positions.count);
+        dropzone.classList.add('hidden');
+        if (!gui) {
+            initGUI();
+        }
+    }, (error) => {
+        console.error('Error loading GLB:', error);
+        alert('Error loading GLB file:\n' + (error.message || 'Unknown error'));
+    });
 }
 
 // Load PLY/SOG
