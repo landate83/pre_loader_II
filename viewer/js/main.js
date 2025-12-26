@@ -324,6 +324,43 @@ async function loadGLB(file) {
             return;
         }
         
+        console.log('Mesh type:', mesh.constructor.name, 'isPoints:', mesh.isPoints);
+        
+        // If it's already a Points object, try using it directly
+        if (mesh.isPoints) {
+            console.log('GLB contains Points object, using it directly');
+            // Remove old point cloud
+            if (pointCloud) {
+                scene.remove(pointCloud);
+                if (pointCloud.geometry) pointCloud.geometry.dispose();
+                if (pointCloud.material) pointCloud.material.dispose();
+            }
+            
+            pointCloud = mesh;
+            scene.add(pointCloud);
+            currentMaterial = pointCloud.material;
+            
+            // Update camera
+            pointCloud.geometry.computeBoundingBox();
+            const box = pointCloud.geometry.boundingBox;
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = camera.fov * (Math.PI / 180);
+            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
+            camera.position.set(center.x, center.y, center.z + cameraZ);
+            controls.target.copy(center);
+            controls.update();
+            
+            updateInfo(pointCloud.geometry.attributes.position.count);
+            dropzone.classList.add('hidden');
+            if (!gui) {
+                initGUI();
+            }
+            return;
+        }
+        
+        // Otherwise, extract attributes and create new point cloud
         const geometry = mesh.geometry;
         const positions = geometry.attributes.position;
         if (!positions) {
