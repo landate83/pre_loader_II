@@ -657,8 +657,27 @@ function createPointCloud(positionAttr, colorAttr) {
     }
     
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', positionAttr);
-    console.log('Geometry created with position attribute, count:', positionAttr.count);
+    
+    // CRITICAL: Use .clone() for position attribute to preserve quantization metadata
+    // This is essential for meshopt files with KHR_mesh_quantization
+    // .clone() preserves scale/offset parameters needed for proper coordinate unpacking
+    let positionAttribute;
+    if (positionAttr instanceof THREE.BufferAttribute) {
+        positionAttribute = positionAttr.clone();
+        console.log('Position attribute cloned (preserves quantization metadata)', {
+            count: positionAttribute.count,
+            itemSize: positionAttribute.itemSize,
+            firstValues: positionAttribute.array ? Array.from(positionAttribute.array.slice(0, 9)) : 'no array',
+            arrayType: positionAttribute.array ? positionAttribute.array.constructor.name : 'no array'
+        });
+    } else {
+        // Fallback for non-BufferAttribute (shouldn't happen with GLB)
+        positionAttribute = positionAttr;
+        console.warn('Position attribute is not a BufferAttribute, using as-is');
+    }
+    
+    geometry.setAttribute('position', positionAttribute);
+    console.log('Geometry created with position attribute, count:', positionAttribute.count);
     
     // Handle color attribute - it might already be a BufferAttribute from GLB
     if (colorAttr) {
@@ -736,7 +755,8 @@ function createPointCloud(positionAttr, colorAttr) {
         size: params.pointSize,
         vertexColors: hasColors,
         transparent: true,
-        opacity: params.opacity
+        opacity: params.opacity,
+        sizeAttenuation: true // Important for proper point size scaling
     });
     
     // Set default color if no vertex colors
@@ -747,7 +767,7 @@ function createPointCloud(positionAttr, colorAttr) {
     // Final verification
     const finalColorAttr = geometry.attributes.color;
     console.log('Created point cloud:', {
-        pointCount: positionAttr.count,
+        pointCount: positionAttribute.count,
         hasColors: hasColors,
         vertexColors: material.vertexColors,
         materialVertexColors: material.vertexColors,
