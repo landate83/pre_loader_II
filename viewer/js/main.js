@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.js';
 
 // ==================== Three.js Initialization ====================
@@ -293,16 +294,17 @@ async function loadGLB(file) {
 
     // Setup MeshoptDecoder for EXT_meshopt_compression (standard Three.js support)
     // MUST be set before parsing any files
-    try {
-        const { MeshoptDecoder } = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/meshopt_decoder.module.js');
-        // Check if ready() method exists and call it if available
-        if (MeshoptDecoder && typeof MeshoptDecoder.ready === 'function') {
+    // Using static import from top of file (more reliable than dynamic import)
+    if (MeshoptDecoder) {
+        // Check if ready() method exists and call it if available (for WASM versions)
+        if (typeof MeshoptDecoder.ready === 'function') {
             await MeshoptDecoder.ready();
         }
         loader.setMeshoptDecoder(MeshoptDecoder);
-        console.log('MeshoptDecoder loaded and set');
-    } catch (err) {
-        console.warn('MeshoptDecoder not available, files with EXT_meshopt_compression may not load:', err);
+        console.log('✅ MeshoptDecoder set successfully');
+    } else {
+        console.error('❌ MeshoptDecoder import failed - decoder is undefined');
+        console.error('Files with EXT_meshopt_compression will not load correctly');
     }
     
     // Read file as ArrayBuffer
