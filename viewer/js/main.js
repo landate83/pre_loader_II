@@ -4,18 +4,6 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.js';
 
-// Load MeshoptDecoder dynamically to ensure it's ready
-let MeshoptDecoder = null;
-(async () => {
-    try {
-        const module = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/meshopt_decoder.module.js');
-        MeshoptDecoder = module.MeshoptDecoder;
-        console.log('MeshoptDecoder loaded successfully:', MeshoptDecoder);
-    } catch (err) {
-        console.error('Failed to load MeshoptDecoder:', err);
-    }
-})();
-
 // ==================== Three.js Initialization ====================
 
 const canvas = document.getElementById('canvas');
@@ -303,37 +291,6 @@ async function loadGLB(file) {
     dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
     loader.setDRACOLoader(dracoLoader);
 
-    // Setup Meshoptimizer decoder (REQUIRED for EXT_meshopt_compression)
-    // Must be set before loading compressed files
-    // Wait for MeshoptDecoder to be loaded if not ready yet
-    if (!MeshoptDecoder) {
-        console.warn('MeshoptDecoder not yet loaded, waiting...');
-        try {
-            const module = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/meshopt_decoder.module.js');
-            MeshoptDecoder = module.MeshoptDecoder;
-            console.log('MeshoptDecoder loaded dynamically:', MeshoptDecoder);
-        } catch (err) {
-            console.error('Failed to load MeshoptDecoder:', err);
-            alert('Warning: Meshoptimizer decoder not available. Files with EXT_meshopt_compression may not load correctly.');
-        }
-    }
-
-    if (MeshoptDecoder) {
-        try {
-            // Ensure MeshoptDecoder is ready (it may need async initialization)
-            if (typeof MeshoptDecoder.ready === 'function') {
-                console.log('Waiting for MeshoptDecoder to be ready...');
-                await MeshoptDecoder.ready();
-                console.log('MeshoptDecoder is ready');
-            }
-            loader.setMeshoptDecoder(MeshoptDecoder);
-            console.log('MeshoptDecoder set successfully on GLTFLoader');
-        } catch (err) {
-            console.error('Failed to set MeshoptDecoder:', err);
-            console.warn('Files with EXT_meshopt_compression may not load correctly');
-        }
-    }
-
     
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -372,39 +329,13 @@ async function loadGLB(file) {
         const jsonText = new TextDecoder().decode(arrayBuffer.slice(20, 20 + jsonChunkLength));
         const gltfJson = JSON.parse(jsonText);
         
-        // Debug: Log extensions used
-        console.log('=== GLB File Structure Debug ===');
-        console.log('GLB extensionsUsed:', gltfJson.extensionsUsed);
-        console.log('GLB extensionsRequired:', gltfJson.extensionsRequired);
-        console.log('GLB buffers:', JSON.stringify(gltfJson.buffers, null, 2));
-        console.log('GLB bufferViews count:', gltfJson.bufferViews?.length);
-        if (gltfJson.bufferViews && gltfJson.bufferViews.length > 0) {
-            console.log('GLB bufferViews[0]:', JSON.stringify(gltfJson.bufferViews[0], null, 2));
-            if (gltfJson.bufferViews[0].extensions) {
-                console.log('GLB bufferViews[0].extensions:', JSON.stringify(gltfJson.bufferViews[0].extensions, null, 2));
-            }
-        }
-        
-        // Check if EXT_meshopt_compression is used
-        const hasMeshopt = gltfJson.extensionsUsed && gltfJson.extensionsUsed.includes('EXT_meshopt_compression');
-        console.log('hasMeshopt:', hasMeshopt);
-        console.log('=== End Debug ===');
-
         // Check for KHR_mesh_quantization extension
-        // NOTE: If EXT_meshopt_compression is present, manual decode should be skipped
-        // because MeshoptDecoder will decompress the data first, then Three.js should handle quantization
         let quantizationInfo = null;
-        let shouldManualDecode = false;
 
         if (gltfJson.extensionsUsed && gltfJson.extensionsUsed.includes('KHR_mesh_quantization')) {
-            if (hasMeshopt) {
-                console.log('KHR_mesh_quantization + EXT_meshopt_compression detected - will let MeshoptDecoder handle decompression, then check if dequantization is needed');
-            } else {
-                console.log('KHR_mesh_quantization extension detected (no meshopt), will manually decode');
-                shouldManualDecode = true;
-            }
-
-            // Find quantization info in accessors (needed for dequantization after meshopt decompression)
+            console.log('KHR_mesh_quantization extension detected, will manually decode');
+            
+            // Find quantization info in accessors
             if (gltfJson.accessors && gltfJson.accessors.length > 0) {
                 const posAccessor = gltfJson.accessors[0];
                 if (posAccessor.extensions && posAccessor.extensions.KHR_mesh_quantization) {
@@ -413,33 +344,6 @@ async function loadGLB(file) {
                 }
             }
         }
-
-        // CRITICAL FIX: Register custom meshopt extension handler
-        // This intercepts buffer loading BEFORE Three.js processes it
-        loader.register(function(parser) {
-            return {
-                name: 'MESHOPT_BUFFER_FIX',
-                beforeRoot: function() {
-                    // Patch getDependency to fix buffer index issues
-                    if (parser.getDependency) {
-                        const originalGetDependency = parser.getDependency.bind(parser);
-
-                        parser.getDependency = function(type, index) {
-                            // Intercept buffer dependency requests
-                            if (type === 'buffer') {
-                                const actualIndex = (index === undefined || index === null) ? 0 : index;
-                                console.log('GLB_MESHOPT_FIX: getDependency buffer, index:', index, '-> fixed:', actualIndex);
-                                return originalGetDependency.call(this, type, actualIndex);
-                            }
-                            return originalGetDependency.call(this, type, index);
-                        };
-
-                        console.log('GLB_MESHOPT_FIX: getDependency patched');
-                    }
-                    return null;
-                }
-            };
-        });
 
         loader.parse(arrayBuffer, '', (gltf) => {
             console.log('GLB loaded successfully:', gltf);
@@ -467,89 +371,56 @@ async function loadGLB(file) {
                     return;
                 }
                 
-                // Handle dequantization based on compression method
+                // Handle dequantization for KHR_mesh_quantization
                 if (quantizationInfo && positions.array) {
-                    if (hasMeshopt) {
-                        // With EXT_meshopt_compression: MeshoptDecoder has already decompressed the data
-                        // Check if Three.js automatically dequantized or if we need to do it manually
-                        console.log('Checking if dequantization is needed after meshopt decompression...');
-                        console.log('Positions array type:', positions.array.constructor.name);
-                        console.log('First values:', Array.from(positions.array.slice(0, 9)));
-                        
-                        // Check if values are still quantized (int16 range) or already dequantized (float range)
-                        const firstVal = positions.array[0];
-                        const isLikelyQuantized = Number.isInteger(firstVal) || 
-                            (Math.abs(firstVal) < 32768 && Math.abs(firstVal) > 0.1 && Math.abs(firstVal) < 1000);
-                        
-                        if (isLikelyQuantized) {
-                            console.log('Positions appear to be still quantized after meshopt decompression, applying dequantization...');
-                            // Three.js didn't automatically dequantize, do it manually
-                            const offset = quantizationInfo.quantizationOffset;
-                            const scale = quantizationInfo.quantizationScale;
-                            
-                            const dequantized = new Float32Array(positions.array.length);
-                            for (let i = 0; i < positions.array.length; i += 3) {
-                                dequantized[i] = positions.array[i] * scale[0] + offset[0];
-                                dequantized[i + 1] = positions.array[i + 1] * scale[1] + offset[1];
-                                dequantized[i + 2] = positions.array[i + 2] * scale[2] + offset[2];
-                            }
-                            
-                            positions = new THREE.BufferAttribute(dequantized, 3);
-                            console.log('Positions dequantized after meshopt. First values:', Array.from(dequantized.slice(0, 9)));
-                        } else {
-                            console.log('Positions appear to be already dequantized by Three.js');
-                        }
+                    console.log('Dequantizing positions manually...');
+                    console.log('Original positions array type:', positions.array.constructor.name);
+                    console.log('Original first values:', Array.from(positions.array.slice(0, 9)));
+                    
+                    // Read quantized data directly from binary buffer if needed
+                    // Three.js may have incorrectly interpreted int16 as float32
+                    let quantizedValues = null;
+                    
+                    // Check if values look like quantized integers (in SHORT range)
+                    const firstVal = positions.array[0];
+                    const isLikelyQuantized = Number.isInteger(firstVal) || (Math.abs(firstVal) < 32768 && Math.abs(firstVal) > 0.1);
+                    
+                    if (isLikelyQuantized) {
+                        // Values are already in correct range, use them directly
+                        quantizedValues = positions.array;
+                        console.log('Using positions array directly (already quantized integers)');
                     } else {
-                        // Without EXT_meshopt_compression: manual decode as before
-                        console.log('Dequantizing positions manually (no meshopt)...');
-                        console.log('Original positions array type:', positions.array.constructor.name);
-                        console.log('Original first values:', Array.from(positions.array.slice(0, 9)));
+                        // Need to read from binary buffer - find the buffer view
+                        const bufferViewIndex = gltfJson.accessors[0].bufferView;
+                        const bufferView = gltfJson.bufferViews[bufferViewIndex];
+                        const binaryChunkOffset = 20 + jsonChunkLength + 8; // Skip JSON chunk header
+                        const dataOffset = binaryChunkOffset + bufferView.byteOffset;
                         
-                        // Read quantized data directly from binary buffer if needed
-                        // Three.js may have incorrectly interpreted int16 as float32
-                        let quantizedValues = null;
-                        
-                        // Check if values look like quantized integers (in SHORT range)
-                        const firstVal = positions.array[0];
-                        const isLikelyQuantized = Number.isInteger(firstVal) || (Math.abs(firstVal) < 32768 && Math.abs(firstVal) > 0.1);
-                        
-                        if (isLikelyQuantized) {
-                            // Values are already in correct range, use them directly
-                            quantizedValues = positions.array;
-                            console.log('Using positions array directly (already quantized integers)');
-                        } else {
-                            // Need to read from binary buffer - find the buffer view
-                            const bufferViewIndex = gltfJson.accessors[0].bufferView;
-                            const bufferView = gltfJson.bufferViews[bufferViewIndex];
-                            const binaryChunkOffset = 20 + jsonChunkLength + 8; // Skip JSON chunk header
-                            const dataOffset = binaryChunkOffset + bufferView.byteOffset;
-                            
-                            // Read int16 data directly
-                            const int16View = new Int16Array(arrayBuffer, dataOffset, positions.count * 3);
-                            quantizedValues = new Float32Array(int16View);
-                            console.log('Read int16 data from binary buffer');
-                            console.log('First int16 values:', Array.from(int16View.slice(0, 9)));
-                        }
-                        
-                        const offset = quantizationInfo.quantizationOffset;
-                        const scale = quantizationInfo.quantizationScale;
-                        
-                        console.log('Quantization offset:', offset);
-                        console.log('Quantization scale:', scale);
-                        
-                        // Dequantize: dequantized = quantized * scale + offset
-                        const dequantized = new Float32Array(quantizedValues.length);
-                        for (let i = 0; i < quantizedValues.length; i += 3) {
-                            dequantized[i] = quantizedValues[i] * scale[0] + offset[0];
-                            dequantized[i + 1] = quantizedValues[i + 1] * scale[1] + offset[1];
-                            dequantized[i + 2] = quantizedValues[i + 2] * scale[2] + offset[2];
-                        }
-                        
-                        // Replace positions with dequantized values
-                        positions = new THREE.BufferAttribute(dequantized, 3);
-                        console.log('Positions dequantized. First values:', Array.from(dequantized.slice(0, 9)));
-                        console.log('Dequantized count:', dequantized.length / 3);
+                        // Read int16 data directly
+                        const int16View = new Int16Array(arrayBuffer, dataOffset, positions.count * 3);
+                        quantizedValues = new Float32Array(int16View);
+                        console.log('Read int16 data from binary buffer');
+                        console.log('First int16 values:', Array.from(int16View.slice(0, 9)));
                     }
+                    
+                    const offset = quantizationInfo.quantizationOffset;
+                    const scale = quantizationInfo.quantizationScale;
+                    
+                    console.log('Quantization offset:', offset);
+                    console.log('Quantization scale:', scale);
+                    
+                    // Dequantize: dequantized = quantized * scale + offset
+                    const dequantized = new Float32Array(quantizedValues.length);
+                    for (let i = 0; i < quantizedValues.length; i += 3) {
+                        dequantized[i] = quantizedValues[i] * scale[0] + offset[0];
+                        dequantized[i + 1] = quantizedValues[i + 1] * scale[1] + offset[1];
+                        dequantized[i + 2] = quantizedValues[i + 2] * scale[2] + offset[2];
+                    }
+                    
+                    // Replace positions with dequantized values
+                    positions = new THREE.BufferAttribute(dequantized, 3);
+                    console.log('Positions dequantized. First values:', Array.from(dequantized.slice(0, 9)));
+                    console.log('Dequantized count:', dequantized.length / 3);
                 }
                 
                 console.log('Position attribute:', {

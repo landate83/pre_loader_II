@@ -371,258 +371,32 @@ def export_glb_with_draco(points: np.ndarray, colors: np.ndarray, output: str, t
         Path(tmp_drc_path).unlink(missing_ok=True)
 
 
-def export_glb_with_meshopt(points: np.ndarray, colors: np.ndarray, output: str, transform: str = 'none') -> int:
-    """
-    Export point cloud to GLB format with Meshoptimizer compression.
-    
-    Uses meshoptimizer to compress point cloud data and embeds it into GLB
-    using EXT_meshopt_compression extension.
-    
-    Note: KHR_mesh_quantization is REQUIRED with Meshoptimizer compression.
-    This function automatically enables quantization.
-    
-    Args:
-        points: Array of shape (N, 3) with point coordinates
-        colors: Array of shape (N, 3) with point colors
-        output: Output file path
-        transform: Coordinate transformation to apply
-        
-    Returns:
-        Size of output file in bytes
-        
-    Raises:
-        ImportError: If meshoptimizer library is not available
-        RuntimeError: If compression fails
-    """
-    if not HAS_MESHOPTIMIZER:
-        raise ImportError(
-            "meshoptimizer library is required for Meshoptimizer compression.\n"
-            "Install it with: pip install meshoptimizer"
-        )
-    
-    # Apply coordinate transformation
-    points_fixed = _transform_coordinates(points, transform)
-    
-    n = len(points_fixed)
-    
-    # Quantization is REQUIRED for meshoptimizer
-    points_quantized, quant_offset, quant_scale = _quantize_positions(points_fixed)
-    # Keep as numpy array for meshoptimizer (it expects array, not bytes)
-    pos_data = points_quantized  # shape: (n, 3), dtype: int16
-    
-    # Colors: use UNSIGNED_BYTE directly
-    colors_uint8 = colors.astype(np.uint8)  # shape: (n, 3), dtype: uint8
-    
-    # Calculate min/max from QUANTIZED positions (integers for SHORT componentType)
-    # For componentType=5122 (SHORT), min/max must be integers
-    # Use actual min/max from the data to avoid mismatches
-    # Convert to Python int to ensure they are proper integers
-    points_quantized_min = [int(x) for x in points_quantized.min(axis=0)]
-    points_quantized_max = [int(x) for x in points_quantized.max(axis=0)]
-    
-    # Compress positions using meshoptimizer
-    # encode_vertex_buffer expects numpy array or contiguous memory buffer
-    # Parameters: vertices (array-like), vertex_count (int), vertex_size (int - bytes per vertex)
-    try:
-        # Try passing numpy array directly
-        # Flatten the array to 1D for meshoptimizer
-        pos_flat = pos_data.flatten()  # Flatten to 1D array
-        pos_compressed = meshoptimizer.encodeVertexBuffer(pos_flat, vertex_count=n, vertex_size=6)  # 3 * int16 = 6 bytes per position
-    except (AttributeError, TypeError, ValueError):
-        # Fallback: try snake_case API
-        try:
-            pos_flat = pos_data.flatten()
-            pos_compressed = meshoptimizer.encode_vertex_buffer(pos_flat, vertex_count=n, vertex_size=6)
-        except (AttributeError, TypeError, ValueError) as e:
-            # Try with bytes if array doesn't work
-            try:
-                pos_bytes = pos_data.tobytes()
-                pos_compressed = meshoptimizer.encode_vertex_buffer(pos_bytes, vertex_count=n, vertex_size=6)
-            except Exception as e2:
-                raise RuntimeError(
-                    f"Failed to compress positions with meshoptimizer. "
-                    f"Tried array and bytes formats. Last error: {e2}. "
-                    f"Please ensure you have the correct version of meshoptimizer installed."
-                )
-    
-    # Compress colors using meshoptimizer
-    try:
-        # Try passing numpy array directly
-        col_flat = colors_uint8.flatten()  # Flatten to 1D array
-        col_compressed = meshoptimizer.encodeVertexBuffer(col_flat, vertex_count=n, vertex_size=3)  # 3 * uint8 = 3 bytes per color
-    except (AttributeError, TypeError, ValueError):
-        # Fallback: try snake_case API
-        try:
-            col_flat = colors_uint8.flatten()
-            col_compressed = meshoptimizer.encode_vertex_buffer(col_flat, vertex_count=n, vertex_size=3)
-        except (AttributeError, TypeError, ValueError) as e:
-            # Try with bytes if array doesn't work
-            try:
-                col_bytes = colors_uint8.tobytes()
-                col_compressed = meshoptimizer.encode_vertex_buffer(col_bytes, vertex_count=n, vertex_size=3)
-            except Exception as e2:
-                raise RuntimeError(
-                    f"Failed to compress colors with meshoptimizer. "
-                    f"Tried array and bytes formats. Last error: {e2}. "
-                    f"Please ensure you have the correct version of meshoptimizer installed."
-                )
-    
-    # Convert compressed data to bytes if it's not already
-    # meshoptimizer.encodeVertexBuffer may return bytes, numpy array, or other format
-    if isinstance(pos_compressed, np.ndarray):
-        pos_compressed = pos_compressed.tobytes()
-    elif not isinstance(pos_compressed, bytes):
-        try:
-            pos_compressed = bytes(pos_compressed) if hasattr(pos_compressed, '__iter__') else bytes([pos_compressed])
-        except (TypeError, ValueError):
-            raise RuntimeError(f"Unexpected type for compressed positions: {type(pos_compressed)}")
-    
-    if isinstance(col_compressed, np.ndarray):
-        col_compressed = col_compressed.tobytes()
-    elif not isinstance(col_compressed, bytes):
-        try:
-            col_compressed = bytes(col_compressed) if hasattr(col_compressed, '__iter__') else bytes([col_compressed])
-        except (TypeError, ValueError):
-            raise RuntimeError(f"Unexpected type for compressed colors: {type(col_compressed)}")
-    
-    # Calculate original sizes for comparison
-    # Original size = number of points * bytes per point
-    pos_bytes_original = pos_data.nbytes  # Total bytes in quantized positions: n * 3 * 2 (int16)
-    col_bytes_original = colors_uint8.nbytes  # Total bytes in colors: n * 3 * 1 (uint8)
-    
-    # Verify sizes are reasonable
-    if pos_bytes_original <= 0 or col_bytes_original <= 0:
-        raise RuntimeError(f"Invalid original sizes: pos={pos_bytes_original}, col={col_bytes_original}")
-    if len(pos_compressed) <= 0 or len(col_compressed) <= 0:
-        raise RuntimeError(f"Invalid compressed sizes: pos={len(pos_compressed)}, col={len(col_compressed)}")
-    
-    # Create buffer views for compressed data
-    pos_buffer_view_index = 0
-    col_buffer_view_index = 1
-    
-    # Calculate offsets in the combined buffer with 4-byte alignment
-    # Start with 4-byte aligned offset (0 is already aligned)
-    pos_offset_aligned = 0
-    
-    # Calculate aligned offset for colors (4-byte alignment)
-    # After pos_compressed, align to next 4-byte boundary
-    col_offset_aligned = ((pos_offset_aligned + len(pos_compressed) + 3) // 4) * 4
-    
-    # Create GLTF2 structure with EXT_meshopt_compression
-    position_accessor = Accessor(
-        bufferView=pos_buffer_view_index,
-        componentType=5122,  # SHORT (quantized)
-        count=n,
-        type='VEC3',
-        max=points_quantized_max,  # Use quantized min/max (integers for SHORT)
-        min=points_quantized_min,  # Use quantized min/max (integers for SHORT)
-        extensions={
-            'KHR_mesh_quantization': {
-                'quantizedAttributes': ['POSITION'],
-                'quantizationOffset': quant_offset,
-                'quantizationScale': quant_scale
-            }
-        }
-    )
-    
-    # Create buffer views with EXT_meshopt_compression extension
-    # According to glTF spec, extension should only contain:
-    # - byteLength: uncompressed size
-    # - byteStride: stride between elements
-    # - mode: 'ATTRIBUTES' or 'TRIANGLES'
-    # - filter: 'NONE' or compression filter type
-    # buffer and byteOffset are already in BufferView, not in extension
-    # Ensure 4-byte alignment for byteOffset (required by glTF spec)
-    # For EXT_meshopt_compression:
-    # - bufferView.byteLength = compressed size (in buffer)
-    # - extension.byteLength = uncompressed size (for decompression)
-    # - accessor describes decompressed data
-    pos_buffer_view = BufferView(
-        buffer=0,
-        byteOffset=pos_offset_aligned,  # Aligned to 4 bytes (0 is already aligned)
-        byteLength=len(pos_compressed),  # Compressed size in buffer
-        target=34962,  # ARRAY_BUFFER for vertex data (required by glTF spec)
-        extensions={
-            'EXT_meshopt_compression': {
-                'byteLength': pos_bytes_original,  # Original uncompressed size (for decompression)
-                'byteStride': 6,  # 3 * int16 = 6 bytes per position
-                'mode': 'ATTRIBUTES',
-                'filter': 'NONE'
-            }
-        }
-    )
-    
-    col_buffer_view = BufferView(
-        buffer=0,
-        byteOffset=col_offset_aligned,  # Aligned to 4 bytes
-        byteLength=len(col_compressed),  # Compressed size in buffer
-        target=34962,  # ARRAY_BUFFER for vertex data (required by glTF spec)
-        extensions={
-            'EXT_meshopt_compression': {
-                'byteLength': col_bytes_original,  # Original uncompressed size (for decompression)
-                'byteStride': 3,  # 3 * uint8 = 3 bytes per color
-                'mode': 'ATTRIBUTES',
-                'filter': 'NONE'
-            }
-        }
-    )
-    
-    gltf = GLTF2(
-        scene=0,
-        scenes=[Scene(nodes=[0])],
-        nodes=[Node(mesh=0)],
-        meshes=[Mesh(
-            primitives=[Primitive(
-                attributes={'POSITION': 0, 'COLOR_0': 1},
-                mode=0  # POINTS
-            )]
-        )],
-        accessors=[
-            position_accessor,
-            Accessor(
-                bufferView=col_buffer_view_index,
-                componentType=5121,  # UNSIGNED_BYTE
-                normalized=True,     # Normalized to [0, 1] range
-                count=n,
-                type='VEC3',
-                # For UNSIGNED_BYTE normalized colors, min/max are optional
-                min=[0, 0, 0],
-                max=[1, 1, 1]
-            )
-        ],
-        bufferViews=[pos_buffer_view, col_buffer_view],
-        buffers=[Buffer(
-            byteLength=col_offset_aligned + len(col_compressed)  # Total size with alignment padding
-            # For GLB files, buffer should not have uri field (it uses binary chunk)
-        )],
-        extensionsUsed=['KHR_mesh_quantization', 'EXT_meshopt_compression'],
-        extensionsRequired=['KHR_mesh_quantization', 'EXT_meshopt_compression']
-    )
-    
-    # Set binary data (compressed) with 4-byte alignment padding
-    # Add padding between pos and col data to ensure 4-byte alignment
-    padding_size = col_offset_aligned - (pos_offset_aligned + len(pos_compressed))
-    padding = b'\x00' * padding_size if padding_size > 0 else b''
-    
-    binary_data = pos_compressed + padding + col_compressed
-    total_buffer_size = col_offset_aligned + len(col_compressed)
-    
-    # Verify binary data size matches buffer size
-    if len(binary_data) != total_buffer_size:
-        raise RuntimeError(
-            f"Binary data size mismatch: expected {total_buffer_size}, got {len(binary_data)}. "
-            f"Pos compressed: {len(pos_compressed)}, Padding: {padding_size}, Col compressed: {len(col_compressed)}"
-        )
-    
-    gltf.set_binary_blob(binary_data)
-    
-    # Save GLB file
-    gltf.save(output)
-    
-    # Get output file size
-    output_size = Path(output).stat().st_size
-    
-    return output_size
+# DEPRECATED: This function is no longer used. We now use gltfpack for meshopt compression.
+# The two-step process: export_glb() creates a raw GLB, then gltfpack optimizes it.
+# def export_glb_with_meshopt(points: np.ndarray, colors: np.ndarray, output: str, transform: str = 'none') -> int:
+#     """
+#     Export point cloud to GLB format with Meshoptimizer compression.
+#     
+#     Uses meshoptimizer to compress point cloud data and embeds it into GLB
+#     using EXT_meshopt_compression extension.
+#     
+#     Note: KHR_mesh_quantization is REQUIRED with Meshoptimizer compression.
+#     This function automatically enables quantization.
+#     
+#     Args:
+#         points: Array of shape (N, 3) with point coordinates
+#         colors: Array of shape (N, 3) with point colors
+#         output: Output file path
+#         transform: Coordinate transformation to apply
+#         
+#     Returns:
+#         Size of output file in bytes
+#         
+#     Raises:
+#         ImportError: If meshoptimizer library is not available
+#         RuntimeError: If compression fails
+#     """
+#     ... (implementation removed - now using gltfpack)
 
 
 def export_draco(points: np.ndarray, colors: np.ndarray, output: str, transform: str = 'none') -> int:

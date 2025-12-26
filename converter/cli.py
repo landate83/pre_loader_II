@@ -3,13 +3,14 @@
 import os
 import sys
 import subprocess
+import shutil
 import threading
 import time
 import click
 from pathlib import Path
 from .reader import read_point_cloud
 from .downsampler import downsample_to_target
-from .exporter import export_glb, export_glb_with_draco, export_glb_with_meshopt, export_draco
+from .exporter import export_glb, export_glb_with_draco, export_draco
 from .filter import apply_sphere_filter
 import numpy as np
 
@@ -179,7 +180,7 @@ def generate_output_filename(
     size: str = None,
     percent: float = None,
     draco: bool = False,
-    meshopt: bool = False,
+    meshopt: int = None,
     quant_explicit: bool = False,
     filter_sphere: bool = False,
     filter_hemisphere: bool = False,
@@ -190,12 +191,15 @@ def generate_output_filename(
     Generate output filename based on input file and parameters.
     
     Format: <input_name>_<params>.glb
-    Params: _prcnt_<value>, _size_<value>, _pnts_<value>, _draco, _meshopt, _quant
+    Params: _prcnt_<value>, _size_<value>, _pnts_<value>, _draco, _meshopt(xx), _quant
     Filter params: _sphere_<radius> or _hemisphere_<radius>, _center_<origin|geometric>
     
     For percent values:
     - Integer: _prcnt_100
     - Decimal: _prcnt_100(5) for 100.5
+    
+    For meshopt:
+    - Always includes precision: _meshopt(16) for default, _meshopt(14) for custom
     
     quant_explicit: If True, quantization was explicitly requested by user (adds _quant suffix)
     """
@@ -253,8 +257,11 @@ def generate_output_filename(
     
     if draco:
         parts.append("_draco")
-    elif meshopt:
-        parts.append("_meshopt")
+    elif meshopt is not None:
+        # Always include precision value in filename: _meshopt(xx)
+        # Use provided value or default to 16
+        vp_value = meshopt if meshopt > 0 else 16
+        parts.append(f"_meshopt({vp_value})")
     
     # Add _quant only if explicitly requested by user (not auto-enabled for meshopt)
     if quant_explicit:
@@ -293,8 +300,8 @@ def interactive_mode(input_file: str):
     click.echo(f"    --size SIZE: Target file size (e.g., 500kb, 10mb, 500 - defaults to kb)")
     click.echo(f"    --percent P: Percentage of source points (0-100)")
     click.echo(f"    --draco: Apply Draco compression (for .glb files, disables quantization, mutually exclusive with --meshopt)")
-    click.echo(f"    --meshopt: Apply Meshoptimizer compression (for .glb files, requires quantization, mutually exclusive with --draco)")
-    click.echo(f"    --quant: Use KHR_mesh_quantization (disabled by default, automatically disabled with --draco, required with --meshopt)")
+    click.echo(f"    --meshopt [PRECISION]: Apply Meshoptimizer compression via gltfpack (for .glb files, mutually exclusive with --draco). PRECISION is quantization precision for positions (vp), default: 16. Use 12-14 for preview, 16 for detailed scenes.")
+    click.echo(f"    --quant: Use KHR_mesh_quantization (disabled by default, automatically disabled with --draco)")
     click.echo(f"    --filter-sphere: Filter points within a sphere (mutually exclusive with --filter-hemisphere)")
     click.echo(f"    --filter-hemisphere: Filter points within a hemisphere (mutually exclusive with --filter-sphere)")
     click.echo(f"    --filter-radius R: Filter radius in relative units (0.0-1.0 = 0%%-100%% of bounding box diagonal, can be >1.0)")
@@ -305,8 +312,10 @@ def interactive_mode(input_file: str):
     click.echo(f"    → Creates: {input_path.parent / (input_path.stem.rstrip('_') + '_pnts_10000.glb')}")
     click.echo(f"  extract output.glb --percent 10 --draco")
     click.echo(f"    → Creates: output.glb with 10% of points, Draco compressed")
+    click.echo(f"  extract output.glb --percent 10 --meshopt 16")
+    click.echo(f"    → Creates: output.glb with 10% of points, Meshoptimizer compressed via gltfpack (vp=16)")
     click.echo(f"  extract output.glb --percent 10 --meshopt")
-    click.echo(f"    → Creates: output.glb with 10% of points, Meshoptimizer compressed (quantization auto-enabled)")
+    click.echo(f"    → Creates: output.glb with 10% of points, Meshoptimizer compressed via gltfpack (vp=16, default)")
     click.echo(f"  extract --size 500kb")
     click.echo(f"    → Creates: {input_path.parent / (input_path.stem.rstrip('_') + '_size_500kb.glb')}")
     click.echo(f"  extract --size 1000")
@@ -344,7 +353,7 @@ def interactive_mode(input_file: str):
                 size = None
                 percent = None
                 draco = False
-                meshopt = False
+                meshopt = None  # None means disabled, int value means enabled with precision
                 quant = False  # Default: disabled
                 quant_explicit = False  # Track if quant was explicitly requested
                 filter_sphere = False
@@ -367,8 +376,14 @@ def interactive_mode(input_file: str):
                         draco = True
                         i += 1
                     elif parts[i] == '--meshopt':
-                        meshopt = True
-                        i += 1
+                        # Check if next argument is a number (precision value)
+                        if i + 1 < len(parts) and parts[i + 1].isdigit():
+                            meshopt = int(parts[i + 1])
+                            i += 2
+                        else:
+                            # No value provided, use default (16)
+                            meshopt = 16
+                            i += 1
                     elif parts[i] == '--quant':
                         quant = True
                         quant_explicit = True  # User explicitly requested quantization
@@ -400,7 +415,7 @@ def interactive_mode(input_file: str):
                         break
                 
                 # Validate compression options (mutually exclusive)
-                if draco and meshopt:
+                if draco and meshopt is not None:
                     click.echo("Error: Cannot use both --draco and --meshopt. Choose one compression method or none.", err=True)
                     continue
                 
@@ -426,12 +441,6 @@ def interactive_mode(input_file: str):
                     quant = False
                     quant_explicit = False  # Reset since we disabled it
                     click.echo("Warning: Quantization and Draco compression both specified - disabling quantization as it provides no benefit with Draco compression", err=True)
-                
-                # Meshoptimizer requires quantization (but don't mark as explicit if auto-enabled)
-                if meshopt and not quant:
-                    quant = True
-                    # quant_explicit remains False since it was auto-enabled
-                    click.echo("Warning: Meshoptimizer compression requires quantization - enabling quantization automatically", err=True)
                 
                 # Generate output filename if not specified
                 if not output:
@@ -475,7 +484,7 @@ def interactive_mode(input_file: str):
 
 
 def _process_extraction(
-    pts, cols, output: str, points: int, size: str, draco: bool, meshopt: bool, source_count: int, 
+    pts, cols, output: str, points: int, size: str, draco: bool, meshopt: int, source_count: int, 
     show_progress: bool = False, quant: bool = False,
     filter_sphere: bool = False, filter_hemisphere: bool = False, 
     filter_radius: float = None, filter_center: str = 'origin'
@@ -646,26 +655,65 @@ def _process_extraction(
                 raise click.ClickException(f"Export error: {e}")
             
             format_name = "GLB with Draco"
-        elif meshopt:
+        elif meshopt is not None:
+            # Two-Step Process: Create raw GLB, then optimize with gltfpack
             if show_progress:
-                # Show exporting stage with points
-                export_bar = create_progress_bar(1, 1, stage_name="Exporting (Meshopt)", current_points=len(pts_down))
+                export_bar = create_progress_bar(1, 1, stage_name="Optimizing (gltfpack)", current_points=len(pts_down))
                 sys.stdout.write(f"\r{export_bar}\n")
                 sys.stdout.flush()
             else:
-                click.echo(f"Exporting to GLB with Meshoptimizer compression: {output}")
-            try:
-                output_size = export_glb_with_meshopt(pts_down, cols_down, output)
-            except ImportError as e:
-                raise click.ClickException(
-                    f"{str(e)}\n"
-                    "To enable Meshoptimizer compression, install meshoptimizer:\n"
-                    "  pip install meshoptimizer"
-                )
-            except Exception as e:
-                raise click.ClickException(f"Meshoptimizer compression error: {e}")
+                click.echo(f"Processing with gltfpack: {output}")
             
-            format_name = "GLB with Meshoptimizer"
+            # 1. Create temporary "raw" GLB file (without quantization, gltfpack will handle it better)
+            temp_output = str(Path(output).with_suffix('.temp.glb'))
+            
+            try:
+                # Export regular GLB without compression
+                raw_size = export_glb(pts_down, cols_down, temp_output, use_quantization=False)
+                
+                # 2. Run gltfpack
+                # Use provided precision or default to 16
+                vp_value = meshopt if meshopt > 0 else 16
+                
+                cmd = [
+                    'gltfpack',
+                    '-i', temp_output,
+                    '-o', output,
+                    '-c',       # Enable meshopt compression
+                    '-vp', str(vp_value),  # Quantization precision for positions
+                    '-vc', '8'   # Quantization precision for colors
+                ]
+                
+                # Check if gltfpack is available
+                if shutil.which('gltfpack') is None:
+                    raise click.ClickException(
+                        "gltfpack not found. Please install it: npm install -g gltfpack"
+                    )
+                
+                result = subprocess.run(
+                    cmd,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                
+                # Get final file size
+                output_size = Path(output).stat().st_size
+                
+                if show_progress:
+                    if result.stderr:
+                        click.echo(f"gltfpack output: {result.stderr}")
+                
+                format_name = f"GLB with Meshopt (via gltfpack, vp={vp_value})"
+                
+            except subprocess.CalledProcessError as e:
+                raise click.ClickException(f"gltfpack execution error: {e.stderr}")
+            except Exception as e:
+                raise click.ClickException(f"Export error: {e}")
+            finally:
+                # 3. Remove temporary file
+                if os.path.exists(temp_output):
+                    os.unlink(temp_output)
         else:
             if show_progress:
                 # Show exporting stage with points
@@ -703,14 +751,14 @@ def _process_extraction(
 @click.option('--size', type=str, help='Target file size (e.g., "500kb", "10mb", "500" - defaults to kb if no unit specified)')
 @click.option('--percent', type=float, help='Target percentage of source points (0-100)')
 @click.option('--draco', is_flag=True, help='Apply Draco compression to GLB output (only for .glb files, mutually exclusive with --meshopt)')
-@click.option('--meshopt', is_flag=True, help='Apply Meshoptimizer compression to GLB output (only for .glb files, requires quantization, mutually exclusive with --draco)')
-@click.option('--quant', is_flag=True, help='Use KHR_mesh_quantization for GLB (disabled by default, automatically disabled with --draco, required with --meshopt)')
+@click.option('--meshopt', type=int, default=None, help='Apply Meshoptimizer compression via gltfpack (only for .glb files, mutually exclusive with --draco). Value is quantization precision for positions (vp), default: 16. Use 12-14 for preview, 16 for detailed scenes.')
+@click.option('--quant', is_flag=True, help='Use KHR_mesh_quantization for GLB (disabled by default, automatically disabled with --draco)')
 @click.option('--filter-sphere', is_flag=True, help='Filter points within a sphere (mutually exclusive with --filter-hemisphere)')
 @click.option('--filter-hemisphere', is_flag=True, help='Filter points within a hemisphere (mutually exclusive with --filter-sphere)')
 @click.option('--filter-radius', type=float, help='Filter radius in relative units (0.0-1.0 = 0%%-100%% of bounding box diagonal, can be >1.0)')
 @click.option('--filter-center', type=str, default='origin', help='Filter center: origin (0,0,0), geometric (centroid), or custom coordinates (x,y,z or x y z)')
 @click.option('-v', '--verbose', is_flag=True, help='Verbose output')
-def main(input_file: str, output: str, points: int, size: str, percent: float, draco: bool, meshopt: bool, quant: bool, filter_sphere: bool, filter_hemisphere: bool, filter_radius: float, filter_center: str, verbose: bool):
+def main(input_file: str, output: str, points: int, size: str, percent: float, draco: bool, meshopt: int, quant: bool, filter_sphere: bool, filter_hemisphere: bool, filter_radius: float, filter_center: str, verbose: bool):
     """
     Convert point cloud files (.ply, .sog) to GLB or Draco format.
     
@@ -733,8 +781,15 @@ def main(input_file: str, output: str, points: int, size: str, percent: float, d
         raise click.UsageError("Specify --points, --size, --percent, or omit all for interactive mode")
     
     # Validate compression options (mutually exclusive)
-    if draco and meshopt:
+    if draco and meshopt is not None:
         raise click.ClickException("Cannot use both --draco and --meshopt. Choose one compression method or none.")
+    
+    # Set default meshopt precision if meshopt is enabled but no value provided
+    if meshopt is not None:
+        # meshopt is enabled, use provided value or default to 16
+        meshopt_precision = meshopt if meshopt > 0 else 16
+    else:
+        meshopt_precision = None
     
     # Validate filter options
     if filter_sphere and filter_hemisphere:
@@ -749,7 +804,7 @@ def main(input_file: str, output: str, points: int, size: str, percent: float, d
     if filter_radius is not None and filter_radius <= 0:
         raise click.ClickException("Filter radius must be greater than 0.")
     
-    # Track if quant was explicitly requested (before auto-enabling for meshopt)
+    # Track if quant was explicitly requested
     quant_explicit = quant
     
     # Check for quantization + draco conflict
@@ -757,12 +812,6 @@ def main(input_file: str, output: str, points: int, size: str, percent: float, d
         quant = False
         quant_explicit = False  # Reset since we disabled it
         click.echo("Warning: Quantization and Draco compression both specified - disabling quantization as it provides no benefit with Draco compression", err=True)
-    
-    # Meshoptimizer requires quantization
-    if meshopt and not quant:
-        quant = True
-        quant_explicit = False  # Auto-enabled, not explicit
-        click.echo("Warning: Meshoptimizer compression requires quantization - enabling quantization automatically", err=True)
     
     # Generate output filename if not specified
     if not output:
@@ -927,25 +976,60 @@ def main(input_file: str, output: str, points: int, size: str, percent: float, d
                 raise click.ClickException(f"Export error: {e}")
             
             click.echo(f"{output}: {len(pts):,} points, {output_size:,} bytes (GLB with Draco)")
-        elif meshopt:
-            # GLB with Meshoptimizer compression
+        elif meshopt_precision is not None:
+            # Two-Step Process: Create raw GLB, then optimize with gltfpack
             # Show exporting stage with points
-            export_bar = create_progress_bar(1, 1, stage_name="Exporting (Meshopt)", current_points=len(pts))
+            export_bar = create_progress_bar(1, 1, stage_name="Optimizing (gltfpack)", current_points=len(pts))
             sys.stdout.write(f"\r{export_bar}\n")
             sys.stdout.flush()
             
-            try:
-                output_size = export_glb_with_meshopt(pts, cols, output)
-            except ImportError as e:
-                raise click.ClickException(
-                    f"{str(e)}\n"
-                    "To enable Meshoptimizer compression, install meshoptimizer:\n"
-                    "  pip install meshoptimizer"
-                )
-            except Exception as e:
-                raise click.ClickException(f"Meshoptimizer compression error: {e}")
+            # 1. Create temporary "raw" GLB file (without quantization, gltfpack will handle it better)
+            temp_output = str(Path(output).with_suffix('.temp.glb'))
             
-            click.echo(f"{output}: {len(pts):,} points, {output_size:,} bytes (GLB with Meshoptimizer)")
+            try:
+                # Export regular GLB without compression
+                raw_size = export_glb(pts, cols, temp_output, use_quantization=False)
+                
+                # 2. Run gltfpack
+                cmd = [
+                    'gltfpack',
+                    '-i', temp_output,
+                    '-o', output,
+                    '-c',       # Enable meshopt compression
+                    '-vp', str(meshopt_precision),  # Quantization precision for positions
+                    '-vc', '8'   # Quantization precision for colors
+                ]
+                
+                # Check if gltfpack is available
+                if shutil.which('gltfpack') is None:
+                    raise click.ClickException(
+                        "gltfpack not found. Please install it: npm install -g gltfpack"
+                    )
+                
+                result = subprocess.run(
+                    cmd,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                
+                # Get final file size
+                output_size = Path(output).stat().st_size
+                
+                if verbose:
+                    if result.stderr:
+                        click.echo(f"gltfpack output: {result.stderr}")
+                
+                click.echo(f"{output}: {len(pts):,} points, {output_size:,} bytes (GLB + Meshopt via gltfpack, vp={meshopt_precision})")
+                
+            except subprocess.CalledProcessError as e:
+                raise click.ClickException(f"gltfpack execution error: {e.stderr}")
+            except Exception as e:
+                raise click.ClickException(f"Export error: {e}")
+            finally:
+                # 3. Remove temporary file
+                if os.path.exists(temp_output):
+                    os.unlink(temp_output)
         else:
             # GLB without compression
             # Show exporting stage with points

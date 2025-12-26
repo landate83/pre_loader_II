@@ -25,6 +25,15 @@ brew install draco
 **Windows:**
 Download drivers from [Draco official repository](https://github.com/google/draco)
 
+### 3. Install gltfpack (for Meshoptimizer compression)
+
+**All platforms:**
+```bash
+npm install -g gltfpack
+```
+
+**Note:** gltfpack is required only if you want to use `--meshopt` flag for Meshoptimizer compression. For Draco compression, only draco-tools is needed.
+
 ## Usage
 
 ### Output Formats
@@ -59,14 +68,14 @@ The utility supports three output formats:
     - `_filtersphere_r[xxxx]` or `_filterhemisphere_r[xxxx]` - filter type and radius (4-digit percentage, e.g., `r0050` for 0.5)
     - `_center_<type>` - filter center (`origin`, `geometric`, or `x_y_z` for custom coordinates)
     - `_draco` - Draco compression
-    - `_meshopt` - Meshoptimizer compression
+    - `_meshopt(xx)` - Meshoptimizer compression with quantization precision (e.g., `_meshopt(16)` for default, `_meshopt(14)` for custom)
     - `_quant` - KHR_mesh_quantization
 - `--points` - Target number of points after downsampling
 - `--size` - Target file size (e.g., "500kb", "10mb", "1gb", "500" - defaults to kb if no unit specified)
 - `--percent` - Target percentage of source points (0-100)
 - `--draco` - Apply Draco compression to GLB output (only for `.glb` files, mutually exclusive with `--meshopt`, automatically disables quantization)
-- `--meshopt` - Apply Meshoptimizer compression to GLB output (only for `.glb` files, mutually exclusive with `--draco`, requires quantization)
-- `--quant` - Use KHR_mesh_quantization for GLB (disabled by default, automatically disabled with `--draco`, required with `--meshopt`)
+- `--meshopt [PRECISION]` - Apply Meshoptimizer compression via gltfpack (only for `.glb` files, mutually exclusive with `--draco`). PRECISION is quantization precision for positions (vp), default: 16. Use 12-14 for preview, 16 for detailed scenes.
+- `--quant` - Use KHR_mesh_quantization for GLB (disabled by default, automatically disabled with `--draco`)
 - `--filter-sphere` - Filter points within a sphere before downsampling (mutually exclusive with `--filter-hemisphere`)
 - `--filter-hemisphere` - Filter points within a hemisphere before downsampling (mutually exclusive with `--filter-sphere`)
 - `--filter-radius FLOAT` - Filter radius in relative units (0.0-1.0 = 0%-100% of bounding box diagonal, can be >1.0). Required when using `--filter-sphere` or `--filter-hemisphere`
@@ -107,9 +116,13 @@ python -m converter.cli model.ply -o model.drc --points 50000 -v
 # Downsample to 2MB file size
 python -m converter.cli large.sog -o compact.glb --size 2mb
 
-# GLB with Meshoptimizer compression (requires quantization)
+# GLB with Meshoptimizer compression via gltfpack (default precision: 16)
 python -m converter.cli model.ply -o model.glb --points 10000 --meshopt -v
-# Creates: model_pnts_10000_meshopt.glb (quantization auto-enabled)
+# Creates: model_pnts_10000_meshopt(16).glb
+
+# GLB with Meshoptimizer compression with custom precision (14 bits for preview)
+python -m converter.cli model.ply -o model.glb --points 10000 --meshopt 14 -v
+# Creates: model_pnts_10000_meshopt(14).glb
 
 # Filter by sphere (50% of diagonal, center at origin) then downsample
 python -m converter.cli input.ply -o output.glb --filter-sphere --filter-radius 0.5 --filter-center origin --points 10000 -v
@@ -161,6 +174,12 @@ In interactive mode:
 > extract --points 5000 --quant
   → Creates: model_pnts_5000_quant.glb with KHR_mesh_quantization
 
+> extract output.glb --percent 10 --meshopt
+  → Creates: output.glb with 10% of points, Meshoptimizer compressed via gltfpack (vp=16, default)
+
+> extract output.glb --percent 10 --meshopt 14
+  → Creates: output.glb with 10% of points, Meshoptimizer compressed via gltfpack (vp=14)
+
 > extract --filter-sphere --filter-radius 0.5 --filter-center origin --points 10000
   → Filters to sphere (50% of diagonal, center at origin), then downsamples to 10000 points
 
@@ -178,13 +197,13 @@ In interactive mode:
 - **Downsampling algorithm**: Voxel Grid Nearest - preserves original point coordinates (does not average them)
 - **Multiple output formats**: 
   - GLB (with optional Draco compression via `--draco` flag)
-  - GLB with Meshoptimizer compression (via `--meshopt` flag, requires quantization)
+  - GLB with Meshoptimizer compression (via `--meshopt [PRECISION]` flag, uses gltfpack)
   - Pure Draco format (.drc) - automatically compressed using [Draco library](https://google.github.io/draco/)
 - **Format support**: .ply (with RGB colors) and .sog (Gaussian Splatting with Spherical Harmonics)
 - **Size optimization**: 
   - KHR_mesh_quantization available via `--quant` flag for GLB (reduces file size by ~50%)
   - Automatically disabled when using Draco compression (Draco handles its own compression)
-  - Required when using Meshoptimizer compression
+  - Meshoptimizer compression (via gltfpack) handles quantization automatically with configurable precision
 - **Point cloud filtering**: Filter points before downsampling using sphere or hemisphere:
   - `--filter-sphere` - Filter points within a sphere
   - `--filter-hemisphere` - Filter points within a hemisphere (Y-up)
@@ -218,4 +237,5 @@ pre_loader_II/
 - plyfile >= 1.0.0
 - pygltflib >= 1.16.0
 - click >= 8.0.0
-- draco-tools (system utility)
+- draco-tools (system utility, for Draco compression)
+- gltfpack (npm package, for Meshoptimizer compression via `--meshopt` flag)
