@@ -291,175 +291,47 @@ async function loadGLB(file) {
     dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
     loader.setDRACOLoader(dracoLoader);
 
+    // Setup MeshoptDecoder for EXT_meshopt_compression (standard Three.js support)
+    try {
+        const { MeshoptDecoder } = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/meshopt_decoder.module.js');
+        await MeshoptDecoder.ready();
+        loader.setMeshoptDecoder(MeshoptDecoder);
+    } catch (err) {
+        console.warn('MeshoptDecoder not available, files with EXT_meshopt_compression may not load:', err);
+    }
     
     const reader = new FileReader();
     reader.onload = (e) => {
         const arrayBuffer = e.target.result;
         
-        // Basic file size check
-        if (arrayBuffer.byteLength < 12) {
-            alert('File is too small to be a valid GLB file');
-            return;
-        }
-        
-        // Let GLTFLoader handle format validation - it's better at detecting invalid files
-        // We'll catch and display errors in the error callback
-        
-        // Parse GLB manually to get quantization info
-        const glbHeader = new DataView(arrayBuffer, 0, 12);
-        const magic = glbHeader.getUint32(0, true);
-        const version = glbHeader.getUint32(4, true);
-        const length = glbHeader.getUint32(8, true);
-        
-        if (magic !== 0x46546C67) { // "glTF"
-            alert('Invalid GLB file format');
-            return;
-        }
-        
-        // Parse JSON chunk
-        const jsonChunkHeader = new DataView(arrayBuffer, 12, 8);
-        const jsonChunkLength = jsonChunkHeader.getUint32(0, true);
-        const jsonChunkType = jsonChunkHeader.getUint32(4, true);
-        
-        if (jsonChunkType !== 0x4E4F534A) { // "JSON"
-            alert('Invalid GLB JSON chunk');
-            return;
-        }
-        
-        const jsonText = new TextDecoder().decode(arrayBuffer.slice(20, 20 + jsonChunkLength));
-        const gltfJson = JSON.parse(jsonText);
-        
-        // Check for KHR_mesh_quantization extension
-        let quantizationInfo = null;
-
-        if (gltfJson.extensionsUsed && gltfJson.extensionsUsed.includes('KHR_mesh_quantization')) {
-            console.log('KHR_mesh_quantization extension detected, will manually decode');
-            
-            // Find quantization info in accessors
-            if (gltfJson.accessors && gltfJson.accessors.length > 0) {
-                const posAccessor = gltfJson.accessors[0];
-                if (posAccessor.extensions && posAccessor.extensions.KHR_mesh_quantization) {
-                    quantizationInfo = posAccessor.extensions.KHR_mesh_quantization;
-                    console.log('Found quantization info:', quantizationInfo);
-                }
-            }
-        }
-
         loader.parse(arrayBuffer, '', (gltf) => {
             console.log('GLB loaded successfully:', gltf);
-            console.log('Scene children count:', gltf.scene.children.length);
-            console.log('Scene children:', gltf.scene.children);
             
             const mesh = gltf.scene.children[0];
-            if (!mesh) {
+            if (!mesh || !mesh.geometry) {
                 console.error('No mesh found in scene!');
                 alert('GLB file loaded but contains no mesh');
                 return;
             }
             
-            console.log('Mesh:', mesh);
-            console.log('Mesh geometry:', mesh.geometry);
+            const geometry = mesh.geometry;
+            const positions = geometry.attributes.position;
+            if (!positions) {
+                console.error('No position attribute found!');
+                alert('GLB file loaded but contains no position data');
+                return;
+            }
             
-            if (mesh && mesh.geometry) {
-                const geometry = mesh.geometry;
-                console.log('Geometry attributes:', Object.keys(geometry.attributes));
-                
-                let positions = geometry.attributes.position;
-                if (!positions) {
-                    console.error('No position attribute found!');
-                    alert('GLB file loaded but contains no position data');
-                    return;
-                }
-                
-                // Handle dequantization for KHR_mesh_quantization
-                if (quantizationInfo && positions.array) {
-                    console.log('Dequantizing positions manually...');
-                    console.log('Original positions array type:', positions.array.constructor.name);
-                    console.log('Original first values:', Array.from(positions.array.slice(0, 9)));
-                    
-                    // Read quantized data directly from binary buffer if needed
-                    // Three.js may have incorrectly interpreted int16 as float32
-                    let quantizedValues = null;
-                    
-                    // Check if values look like quantized integers (in SHORT range)
-                    const firstVal = positions.array[0];
-                    const isLikelyQuantized = Number.isInteger(firstVal) || (Math.abs(firstVal) < 32768 && Math.abs(firstVal) > 0.1);
-                    
-                    if (isLikelyQuantized) {
-                        // Values are already in correct range, use them directly
-                        quantizedValues = positions.array;
-                        console.log('Using positions array directly (already quantized integers)');
-                    } else {
-                        // Need to read from binary buffer - find the buffer view
-                        const bufferViewIndex = gltfJson.accessors[0].bufferView;
-                        const bufferView = gltfJson.bufferViews[bufferViewIndex];
-                        const binaryChunkOffset = 20 + jsonChunkLength + 8; // Skip JSON chunk header
-                        const dataOffset = binaryChunkOffset + bufferView.byteOffset;
-                        
-                        // Read int16 data directly
-                        const int16View = new Int16Array(arrayBuffer, dataOffset, positions.count * 3);
-                        quantizedValues = new Float32Array(int16View);
-                        console.log('Read int16 data from binary buffer');
-                        console.log('First int16 values:', Array.from(int16View.slice(0, 9)));
-                    }
-                    
-                    const offset = quantizationInfo.quantizationOffset;
-                    const scale = quantizationInfo.quantizationScale;
-                    
-                    console.log('Quantization offset:', offset);
-                    console.log('Quantization scale:', scale);
-                    
-                    // Dequantize: dequantized = quantized * scale + offset
-                    const dequantized = new Float32Array(quantizedValues.length);
-                    for (let i = 0; i < quantizedValues.length; i += 3) {
-                        dequantized[i] = quantizedValues[i] * scale[0] + offset[0];
-                        dequantized[i + 1] = quantizedValues[i + 1] * scale[1] + offset[1];
-                        dequantized[i + 2] = quantizedValues[i + 2] * scale[2] + offset[2];
-                    }
-                    
-                    // Replace positions with dequantized values
-                    positions = new THREE.BufferAttribute(dequantized, 3);
-                    console.log('Positions dequantized. First values:', Array.from(dequantized.slice(0, 9)));
-                    console.log('Dequantized count:', dequantized.length / 3);
-                }
-                
-                console.log('Position attribute:', {
-                    count: positions.count,
-                    itemSize: positions.itemSize,
-                    arrayLength: positions.array ? positions.array.length : 0,
-                    firstValues: positions.array ? Array.from(positions.array.slice(0, 9)) : 'no array'
-                });
-                
-                let colors = geometry.attributes.COLOR_0 || geometry.attributes.color;
-                
-                // GLB colors are already BufferAttributes, use them directly
-                // But we need to rename COLOR_0 to 'color' for Three.js PointsMaterial
-                if (colors) {
-                    console.log('Found colors in GLB:', {
-                        name: colors.name || 'COLOR_0',
-                        count: colors.count,
-                        itemSize: colors.itemSize,
-                        normalized: colors.normalized,
-                        arrayLength: colors.array ? colors.array.length : 0,
-                        firstValues: colors.array ? Array.from(colors.array.slice(0, 9)) : 'no array'
-                    });
-                } else {
-                    console.log('No colors found in GLB file');
-                }
-                
-                createPointCloud(positions, colors);
-                updateInfo(positions.count);
-                dropzone.classList.add('hidden');
-                if (!gui) {
-                    initGUI();
-                }
-            } else {
-                console.error('No geometry found:', { mesh, hasGeometry: mesh?.geometry });
-                alert('GLB file loaded but contains no valid geometry');
+            const colors = geometry.attributes.COLOR_0 || geometry.attributes.color;
+            
+            createPointCloud(positions, colors);
+            updateInfo(positions.count);
+            dropzone.classList.add('hidden');
+            if (!gui) {
+                initGUI();
             }
         }, (error) => {
             console.error('Error loading GLB:', error);
-            console.error('Error stack:', error.stack);
             alert('Error loading GLB file:\n' + (error.message || 'Unknown error'));
         });
     };
