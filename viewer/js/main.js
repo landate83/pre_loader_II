@@ -295,7 +295,10 @@ async function loadGLB(file) {
     // MUST be set before parsing any files
     try {
         const { MeshoptDecoder } = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/meshopt_decoder.module.js');
-        await MeshoptDecoder.ready();
+        // Check if ready() method exists and call it if available
+        if (MeshoptDecoder && typeof MeshoptDecoder.ready === 'function') {
+            await MeshoptDecoder.ready();
+        }
         loader.setMeshoptDecoder(MeshoptDecoder);
         console.log('MeshoptDecoder loaded and set');
     } catch (err) {
