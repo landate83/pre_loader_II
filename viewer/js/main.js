@@ -679,6 +679,30 @@ function createPointCloud(positionAttr, colorAttr) {
     geometry.setAttribute('position', positionAttribute);
     console.log('Geometry created with position attribute, count:', positionAttribute.count);
     
+    // Check if coordinates look quantized (large integers) and need dequantization
+    const posArray = positionAttribute.array;
+    if (posArray && posArray.length > 0) {
+        const firstVal = Math.abs(posArray[0]);
+        const isLikelyQuantized = firstVal > 1000 && firstVal < 32768 && Number.isInteger(firstVal);
+        
+        if (isLikelyQuantized) {
+            console.warn('Coordinates appear to be quantized (integers in range 1000-32768)');
+            console.warn('First 9 values:', Array.from(posArray.slice(0, 9)));
+            console.warn('Three.js should have dequantized these automatically. Checking if dequantization is needed...');
+            
+            // Check if values are in reasonable float range after Three.js processing
+            const sampleValues = Array.from(posArray.slice(0, 30));
+            const avgAbs = sampleValues.reduce((sum, v) => sum + Math.abs(v), 0) / sampleValues.length;
+            
+            if (avgAbs > 100 && avgAbs < 10000) {
+                console.warn('Values are in suspicious range - may need manual dequantization');
+                console.warn('Average absolute value:', avgAbs);
+            } else {
+                console.log('Values appear to be in reasonable range, Three.js likely handled dequantization');
+            }
+        }
+    }
+    
     // Handle color attribute - it might already be a BufferAttribute from GLB
     if (colorAttr) {
         // If it's already a BufferAttribute, clone it properly
@@ -844,9 +868,75 @@ function createPointCloud(positionAttr, colorAttr) {
         maxDim: maxDim
     });
     
+    // Check if bounding box is valid (not all zeros or invalid)
+    const isValidBoundingBox = !isNaN(maxDim) && isFinite(maxDim) && maxDim > 0 && maxDim < 1e6;
+    
+    if (!isValidBoundingBox) {
+        console.error('Invalid bounding box detected! Coordinates may not be properly unpacked.');
+        console.error('First 9 position values:', Array.from(geometry.attributes.position.array.slice(0, 9)));
+        console.error('Position array type:', geometry.attributes.position.array.constructor.name);
+        
+        // Try to manually compute bounding box from raw values
+        const posArray = geometry.attributes.position.array;
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        
+        for (let i = 0; i < posArray.length; i += 3) {
+            const x = posArray[i];
+            const y = posArray[i + 1];
+            const z = posArray[i + 2];
+            
+            if (isFinite(x) && isFinite(y) && isFinite(z)) {
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+                maxZ = Math.max(maxZ, z);
+            }
+        }
+        
+        console.log('Manually computed bounds:', {
+            min: { x: minX, y: minY, z: minZ },
+            max: { x: maxX, y: maxY, z: maxZ }
+        });
+        
+        // Update bounding box manually
+        box.min.set(minX, minY, minZ);
+        box.max.set(maxX, maxY, maxZ);
+        const newCenter = box.getCenter(new THREE.Vector3());
+        const newSize = box.getSize(new THREE.Vector3());
+        const newMaxDim = Math.max(newSize.x, newSize.y, newSize.z);
+        
+        center.copy(newCenter);
+        maxDim = newMaxDim;
+        
+        console.log('Updated bounding box:', {
+            center: { x: center.x, y: center.y, z: center.z },
+            size: { x: newSize.x, y: newSize.y, z: newSize.z },
+            maxDim: maxDim
+        });
+    }
+    
+    // Adjust point size if bounding box is very large or very small
+    if (maxDim > 1000) {
+        console.warn('Very large bounding box detected, increasing point size');
+        material.size = Math.max(material.size, maxDim / 10000);
+    } else if (maxDim < 0.1) {
+        console.warn('Very small bounding box detected, decreasing point size');
+        material.size = Math.min(material.size, maxDim * 10);
+    }
+    
     const fov = camera.fov * (Math.PI / 180);
     let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
     cameraZ *= 1.5;
+    
+    // Ensure camera is at reasonable distance
+    if (!isFinite(cameraZ) || cameraZ <= 0 || cameraZ > 1e6) {
+        console.warn('Invalid camera distance, using fallback');
+        cameraZ = maxDim > 0 ? maxDim * 2 : 10;
+    }
+    
     camera.position.set(center.x, center.y, center.z + cameraZ);
     controls.target.copy(center);
     controls.update();
@@ -854,7 +944,9 @@ function createPointCloud(positionAttr, colorAttr) {
     console.log('Camera setup:', {
         position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
         target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
-        cameraZ: cameraZ
+        cameraZ: cameraZ,
+        pointSize: material.size,
+        isValidBoundingBox: isValidBoundingBox
     });
     
     // Apply restored parameters after pointCloud is created
