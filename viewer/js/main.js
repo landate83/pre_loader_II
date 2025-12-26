@@ -294,17 +294,40 @@ async function loadGLB(file) {
 
     // Setup MeshoptDecoder for EXT_meshopt_compression (standard Three.js support)
     // MUST be set before parsing any files
-    // Using static import from top of file (more reliable than dynamic import)
-    if (MeshoptDecoder) {
-        // Check if ready() method exists and call it if available (for WASM versions)
-        if (typeof MeshoptDecoder.ready === 'function') {
-            await MeshoptDecoder.ready();
+    // Try static import first, fallback to dynamic import if needed
+    let meshoptDecoder = MeshoptDecoder;
+    
+    console.log('Checking MeshoptDecoder:', {
+        isDefined: typeof MeshoptDecoder !== 'undefined',
+        type: typeof MeshoptDecoder,
+        hasReady: MeshoptDecoder && typeof MeshoptDecoder.ready === 'function'
+    });
+    
+    // If static import failed, try dynamic import as fallback
+    if (!meshoptDecoder || typeof meshoptDecoder === 'undefined') {
+        console.warn('Static MeshoptDecoder import failed, trying dynamic import...');
+        try {
+            const module = await import('three/addons/libs/meshopt_decoder.module.js');
+            meshoptDecoder = module.MeshoptDecoder || module.default;
+            console.log('Dynamic MeshoptDecoder import successful');
+        } catch (err) {
+            console.error('Both static and dynamic MeshoptDecoder imports failed:', err);
         }
-        loader.setMeshoptDecoder(MeshoptDecoder);
-        console.log('✅ MeshoptDecoder set successfully');
+    }
+    
+    if (meshoptDecoder) {
+        // Check if ready() method exists and call it if available (for WASM versions)
+        if (typeof meshoptDecoder.ready === 'function') {
+            console.log('Waiting for MeshoptDecoder.ready()...');
+            await meshoptDecoder.ready();
+            console.log('MeshoptDecoder.ready() completed');
+        }
+        loader.setMeshoptDecoder(meshoptDecoder);
+        console.log('✅ MeshoptDecoder set successfully on GLTFLoader');
     } else {
-        console.error('❌ MeshoptDecoder import failed - decoder is undefined');
+        console.error('❌ MeshoptDecoder not available - decoder is undefined');
         console.error('Files with EXT_meshopt_compression will not load correctly');
+        console.error('This will cause invalid bounding box errors');
     }
     
     // Read file as ArrayBuffer
@@ -392,8 +415,22 @@ async function loadGLB(file) {
             
             if (!box || !box.isValid || isNaN(box.min.x)) {
                 console.error('Invalid bounding box computed!');
-                console.error('Position array first 9 values:', 
-                    posAttr && posAttr.array ? Array.from(posAttr.array.slice(0, 9)) : 'no array');
+                const firstValues = posAttr && posAttr.array ? Array.from(posAttr.array.slice(0, 9)) : 'no array';
+                console.error('Position array first 9 values:', firstValues);
+                console.error('Position array type:', posAttr && posAttr.array ? posAttr.array.constructor.name : 'no array');
+                console.error('Position attribute details:', {
+                    count: posAttr ? posAttr.count : 0,
+                    itemSize: posAttr ? posAttr.itemSize : 0,
+                    normalized: posAttr ? posAttr.normalized : false
+                });
+                
+                // Check if values look quantized (large integers)
+                if (firstValues !== 'no array' && firstValues.length > 0) {
+                    const firstVal = Math.abs(firstValues[0]);
+                    const isQuantized = firstVal > 1000 && firstVal < 32768 && Number.isInteger(firstVal);
+                    console.error('Values appear quantized (integers):', isQuantized);
+                    console.error('This suggests MeshoptDecoder did not properly decompress the data');
+                }
             }
             
             const center = box.getCenter(new THREE.Vector3());
