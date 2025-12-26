@@ -329,6 +329,25 @@ async function loadGLB(file) {
         // If it's already a Points object, try using it directly
         if (mesh.isPoints) {
             console.log('GLB contains Points object, using it directly');
+            
+            // Log material info
+            console.log('Points material:', {
+                type: mesh.material.constructor.name,
+                size: mesh.material.size,
+                opacity: mesh.material.opacity,
+                vertexColors: mesh.material.vertexColors,
+                visible: mesh.material.visible,
+                transparent: mesh.material.transparent
+            });
+            
+            // Log geometry info
+            const posAttr = mesh.geometry.attributes.position;
+            console.log('Points geometry:', {
+                positionCount: posAttr ? posAttr.count : 0,
+                hasColors: !!mesh.geometry.attributes.color,
+                firstPositionValues: posAttr && posAttr.array ? Array.from(posAttr.array.slice(0, 9)) : 'no array'
+            });
+            
             // Remove old point cloud
             if (pointCloud) {
                 scene.remove(pointCloud);
@@ -337,26 +356,100 @@ async function loadGLB(file) {
             }
             
             pointCloud = mesh;
+            
+            // Ensure material is properly configured
+            if (pointCloud.material) {
+                // Make sure material is visible and has proper settings
+                pointCloud.material.visible = true;
+                if (!pointCloud.material.size || pointCloud.material.size <= 0) {
+                    console.warn('Material size is invalid, setting to default');
+                    pointCloud.material.size = params.pointSize || 0.03;
+                }
+                if (pointCloud.material.opacity === undefined || pointCloud.material.opacity <= 0) {
+                    console.warn('Material opacity is invalid, setting to default');
+                    pointCloud.material.opacity = params.opacity || 1.0;
+                }
+                pointCloud.material.needsUpdate = true;
+            }
+            
+            // Ensure point cloud is visible
+            pointCloud.visible = true;
+            
             scene.add(pointCloud);
             currentMaterial = pointCloud.material;
+            
+            console.log('Point cloud added to scene:', {
+                inScene: scene.children.includes(pointCloud),
+                visible: pointCloud.visible,
+                materialVisible: pointCloud.material ? pointCloud.material.visible : 'no material'
+            });
             
             // Update camera
             pointCloud.geometry.computeBoundingBox();
             const box = pointCloud.geometry.boundingBox;
+            
+            if (!box || !box.isValid || isNaN(box.min.x)) {
+                console.error('Invalid bounding box computed!');
+                console.error('Position array first 9 values:', 
+                    posAttr && posAttr.array ? Array.from(posAttr.array.slice(0, 9)) : 'no array');
+            }
+            
             const center = box.getCenter(new THREE.Vector3());
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
+            
+            console.log('Bounding box (direct Points):', {
+                min: { x: box.min.x, y: box.min.y, z: box.min.z },
+                max: { x: box.max.x, y: box.max.y, z: box.max.z },
+                center: { x: center.x, y: center.y, z: center.z },
+                size: { x: size.x, y: size.y, z: size.z },
+                maxDim: maxDim,
+                isValid: box.isValid
+            });
+            
             const fov = camera.fov * (Math.PI / 180);
             let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
+            
+            // Ensure camera distance is valid
+            if (!isFinite(cameraZ) || cameraZ <= 0 || cameraZ > 1e6) {
+                console.warn('Invalid camera distance, using fallback');
+                cameraZ = maxDim > 0 ? maxDim * 2 : 10;
+            }
+            
             camera.position.set(center.x, center.y, center.z + cameraZ);
             controls.target.copy(center);
             controls.update();
             
-            updateInfo(pointCloud.geometry.attributes.position.count);
+            console.log('Camera setup (direct Points):', {
+                position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+                cameraZ: cameraZ,
+                pointSize: pointCloud.material ? pointCloud.material.size : 'no material'
+            });
+            
+            // Store original data for filtering
+            originalPointCount = posAttr ? posAttr.count : 0;
+            originalPositions = posAttr && posAttr.array ? posAttr.array.slice() : null;
+            if (pointCloud.geometry.attributes.color) {
+                originalColors = pointCloud.geometry.attributes.color.array.slice();
+            } else {
+                originalColors = null;
+            }
+            
+            // Update params
+            params.maxPoints = originalPointCount;
+            params.pointPercent = 100;
+            
+            updateInfo(originalPointCount);
             dropzone.classList.add('hidden');
             if (!gui) {
                 initGUI();
             }
+            
+            // Apply animation if needed
+            applyAnimation(params.animation);
+            currentAnimation = params.animation;
+            
             return;
         }
         
