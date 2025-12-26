@@ -2,8 +2,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.js';
+
+// MeshoptDecoder will be loaded dynamically to ensure it's available
+let MeshoptDecoder = null;
 
 // ==================== Three.js Initialization ====================
 
@@ -294,35 +296,34 @@ async function loadGLB(file) {
 
     // Setup MeshoptDecoder for EXT_meshopt_compression (standard Three.js support)
     // MUST be set before parsing any files
-    // Try static import first, fallback to dynamic import if needed
-    let meshoptDecoder = MeshoptDecoder;
-    
-    console.log('Checking MeshoptDecoder:', {
-        isDefined: typeof MeshoptDecoder !== 'undefined',
-        type: typeof MeshoptDecoder,
-        hasReady: MeshoptDecoder && typeof MeshoptDecoder.ready === 'function'
-    });
-    
-    // If static import failed, try dynamic import as fallback
-    if (!meshoptDecoder || typeof meshoptDecoder === 'undefined') {
-        console.warn('Static MeshoptDecoder import failed, trying dynamic import...');
+    // Load MeshoptDecoder dynamically (more reliable than static import)
+    if (!MeshoptDecoder) {
         try {
+            // Try importing from three/addons first (uses importmap)
             const module = await import('three/addons/libs/meshopt_decoder.module.js');
-            meshoptDecoder = module.MeshoptDecoder || module.default;
-            console.log('Dynamic MeshoptDecoder import successful');
+            MeshoptDecoder = module.MeshoptDecoder || module.default || module;
+            console.log('MeshoptDecoder loaded from three/addons');
         } catch (err) {
-            console.error('Both static and dynamic MeshoptDecoder imports failed:', err);
+            console.warn('Failed to load MeshoptDecoder from three/addons, trying CDN...', err);
+            try {
+                // Fallback to direct CDN import
+                const module = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/meshopt_decoder.module.js');
+                MeshoptDecoder = module.MeshoptDecoder || module.default || module;
+                console.log('MeshoptDecoder loaded from CDN');
+            } catch (err2) {
+                console.error('Failed to load MeshoptDecoder from both sources:', err2);
+            }
         }
     }
     
-    if (meshoptDecoder) {
+    if (MeshoptDecoder) {
         // Check if ready() method exists and call it if available (for WASM versions)
-        if (typeof meshoptDecoder.ready === 'function') {
+        if (typeof MeshoptDecoder.ready === 'function') {
             console.log('Waiting for MeshoptDecoder.ready()...');
-            await meshoptDecoder.ready();
+            await MeshoptDecoder.ready();
             console.log('MeshoptDecoder.ready() completed');
         }
-        loader.setMeshoptDecoder(meshoptDecoder);
+        loader.setMeshoptDecoder(MeshoptDecoder);
         console.log('✅ MeshoptDecoder set successfully on GLTFLoader');
     } else {
         console.error('❌ MeshoptDecoder not available - decoder is undefined');
