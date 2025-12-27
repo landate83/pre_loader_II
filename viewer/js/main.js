@@ -351,38 +351,15 @@ async function loadGLB(file) {
                 arrayType: posAttrBefore && posAttrBefore.array ? posAttrBefore.array.constructor.name : 'no array'
             });
             
-            // === CRITICAL: Dequantize coordinates for meshopt files ===
-            // Meshopt files with KHR_mesh_quantization store coordinates as Uint16 (0-65535)
+            // === CRITICAL: For meshopt files with KHR_mesh_quantization ===
+            // Meshopt files store coordinates as quantized integers (Uint16/Int16)
             // with a transformation matrix (scale/offset) to convert to real coordinates.
-            // We need to "bake" this transformation into the geometry to get Float32 coordinates
-            // that work correctly with our filtering and shader logic.
+            // Three.js applies the matrix automatically during rendering via matrixWorld.
+            // We keep the object as-is for rendering, but need to handle dequantization
+            // for filtering/shader logic if coordinates are still quantized.
             
+            // Ensure matrix is up to date (Three.js will use it for rendering)
             mesh.updateMatrixWorld(true);
-            
-            // Clone geometry to avoid breaking references
-            const originalGeometry = mesh.geometry;
-            const bakedGeometry = originalGeometry.clone();
-            
-            // Apply matrix transformation - this converts quantized coordinates to Float32
-            // This is essential for meshopt files with KHR_mesh_quantization
-            bakedGeometry.applyMatrix4(mesh.matrixWorld);
-            
-            // Reset mesh transformations since we've "baked" them into the geometry
-            mesh.position.set(0, 0, 0);
-            mesh.rotation.set(0, 0, 0);
-            mesh.scale.set(1, 1, 1);
-            mesh.updateMatrixWorld(true);
-            
-            // Replace geometry with dequantized version
-            mesh.geometry = bakedGeometry;
-            
-            // Log geometry info AFTER dequantization
-            const posAttrAfter = mesh.geometry.attributes.position;
-            console.log('Points geometry (AFTER dequantization):', {
-                positionCount: posAttrAfter ? posAttrAfter.count : 0,
-                firstPositionValues: posAttrAfter && posAttrAfter.array ? Array.from(posAttrAfter.array.slice(0, 9)) : 'no array',
-                arrayType: posAttrAfter && posAttrAfter.array ? posAttrAfter.array.constructor.name : 'no array'
-            });
             
             // Remove old point cloud
             if (pointCloud) {
@@ -421,13 +398,15 @@ async function loadGLB(file) {
             });
             
             // Update camera
-            pointCloud.geometry.computeBoundingBox();
-            const box = pointCloud.geometry.boundingBox;
+            // Use Box3().setFromObject() like three-gltf-viewer does
+            // This automatically accounts for object's transformation matrix
+            pointCloud.updateMatrixWorld(true);
+            const box = new THREE.Box3().setFromObject(pointCloud);
             
             // Get position attribute for error logging
             const posAttr = pointCloud.geometry.attributes.position;
             
-            if (!box || !box.isValid || isNaN(box.min.x)) {
+            if (!box || !box.isEmpty() || isNaN(box.min.x)) {
                 console.error('Invalid bounding box computed!');
                 const firstValues = posAttr && posAttr.array ? Array.from(posAttr.array.slice(0, 9)) : 'no array';
                 console.error('Position array first 9 values:', firstValues);
@@ -451,13 +430,13 @@ async function loadGLB(file) {
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
             
-            console.log('Bounding box (direct Points):', {
+            console.log('Bounding box (direct Points, using setFromObject):', {
                 min: { x: box.min.x, y: box.min.y, z: box.min.z },
                 max: { x: box.max.x, y: box.max.y, z: box.max.z },
                 center: { x: center.x, y: center.y, z: center.z },
                 size: { x: size.x, y: size.y, z: size.z },
                 maxDim: maxDim,
-                isValid: box.isValid
+                isEmpty: box.isEmpty()
             });
             
             const fov = camera.fov * (Math.PI / 180);
@@ -480,10 +459,49 @@ async function loadGLB(file) {
                 pointSize: pointCloud.material ? pointCloud.material.size : 'no material'
             });
             
-            // Store original data for filtering (AFTER dequantization - now Float32)
+            // Store original data for filtering
+            // Check if coordinates need dequantization (Uint16Array/Int16Array)
             // posAttr is already defined above for error logging
             originalPointCount = posAttr ? posAttr.count : 0;
-            originalPositions = posAttr && posAttr.array ? posAttr.array.slice() : null;
+            
+            const posArray = posAttr && posAttr.array ? posAttr.array : null;
+            if (posArray) {
+                const arrayType = posArray.constructor.name;
+                console.log('Position array type for filtering:', arrayType);
+                
+                // Check if coordinates are quantized (Uint16Array or Int16Array)
+                if (arrayType === 'Uint16Array' || arrayType === 'Int16Array') {
+                    console.log('Coordinates are quantized, dequantizing for filtering...');
+                    // Dequantize using matrix transformation
+                    // Apply matrix to each point to get Float32 coordinates
+                    const dequantized = new Float32Array(posArray.length);
+                    const matrix = pointCloud.matrixWorld;
+                    
+                    for (let i = 0; i < posArray.length; i += 3) {
+                        const x = posArray[i];
+                        const y = posArray[i + 1];
+                        const z = posArray[i + 2];
+                        
+                        // Apply matrix transformation
+                        const vec = new THREE.Vector3(x, y, z);
+                        vec.applyMatrix4(matrix);
+                        
+                        dequantized[i] = vec.x;
+                        dequantized[i + 1] = vec.y;
+                        dequantized[i + 2] = vec.z;
+                    }
+                    
+                    originalPositions = dequantized;
+                    console.log('Coordinates dequantized for filtering. First values:', Array.from(dequantized.slice(0, 9)));
+                } else {
+                    // Already Float32Array, use as-is
+                    originalPositions = posArray.slice();
+                    console.log('Coordinates are already Float32, using as-is');
+                }
+            } else {
+                originalPositions = null;
+            }
+            
             if (pointCloud.geometry.attributes.color) {
                 originalColors = pointCloud.geometry.attributes.color.array.slice();
             } else {
