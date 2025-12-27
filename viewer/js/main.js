@@ -2,10 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.js';
-
-// MeshoptDecoder will be loaded dynamically to ensure it's available
-let MeshoptDecoder = null;
 
 // ==================== Three.js Initialization ====================
 
@@ -296,39 +294,17 @@ async function loadGLB(file) {
 
     // Setup MeshoptDecoder for EXT_meshopt_compression (standard Three.js support)
     // MUST be set before parsing any files
-    // Load MeshoptDecoder dynamically (more reliable than static import)
-    if (!MeshoptDecoder) {
-        try {
-            // Try importing from three/addons first (uses importmap)
-            const module = await import('three/addons/libs/meshopt_decoder.module.js');
-            MeshoptDecoder = module.MeshoptDecoder || module.default || module;
-            console.log('MeshoptDecoder loaded from three/addons');
-        } catch (err) {
-            console.warn('Failed to load MeshoptDecoder from three/addons, trying CDN...', err);
-            try {
-                // Fallback to direct CDN import
-                const module = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/meshopt_decoder.module.js');
-                MeshoptDecoder = module.MeshoptDecoder || module.default || module;
-                console.log('MeshoptDecoder loaded from CDN');
-            } catch (err2) {
-                console.error('Failed to load MeshoptDecoder from both sources:', err2);
-            }
-        }
-    }
-    
+    // Using static import from top of file
     if (MeshoptDecoder) {
         // Check if ready() method exists and call it if available (for WASM versions)
         if (typeof MeshoptDecoder.ready === 'function') {
-            console.log('Waiting for MeshoptDecoder.ready()...');
             await MeshoptDecoder.ready();
-            console.log('MeshoptDecoder.ready() completed');
         }
         loader.setMeshoptDecoder(MeshoptDecoder);
         console.log('✅ MeshoptDecoder set successfully on GLTFLoader');
     } else {
-        console.error('❌ MeshoptDecoder not available - decoder is undefined');
+        console.error('❌ MeshoptDecoder import failed - decoder is undefined');
         console.error('Files with EXT_meshopt_compression will not load correctly');
-        console.error('This will cause invalid bounding box errors');
     }
     
     // Read file as ArrayBuffer
@@ -366,12 +342,46 @@ async function loadGLB(file) {
                 transparent: mesh.material.transparent
             });
             
-            // Log geometry info
-            const posAttr = mesh.geometry.attributes.position;
-            console.log('Points geometry:', {
-                positionCount: posAttr ? posAttr.count : 0,
+            // Log geometry info BEFORE dequantization
+            const posAttrBefore = mesh.geometry.attributes.position;
+            console.log('Points geometry (BEFORE dequantization):', {
+                positionCount: posAttrBefore ? posAttrBefore.count : 0,
                 hasColors: !!mesh.geometry.attributes.color,
-                firstPositionValues: posAttr && posAttr.array ? Array.from(posAttr.array.slice(0, 9)) : 'no array'
+                firstPositionValues: posAttrBefore && posAttrBefore.array ? Array.from(posAttrBefore.array.slice(0, 9)) : 'no array',
+                arrayType: posAttrBefore && posAttrBefore.array ? posAttrBefore.array.constructor.name : 'no array'
+            });
+            
+            // === CRITICAL: Dequantize coordinates for meshopt files ===
+            // Meshopt files with KHR_mesh_quantization store coordinates as Uint16 (0-65535)
+            // with a transformation matrix (scale/offset) to convert to real coordinates.
+            // We need to "bake" this transformation into the geometry to get Float32 coordinates
+            // that work correctly with our filtering and shader logic.
+            
+            mesh.updateMatrixWorld(true);
+            
+            // Clone geometry to avoid breaking references
+            const originalGeometry = mesh.geometry;
+            const bakedGeometry = originalGeometry.clone();
+            
+            // Apply matrix transformation - this converts quantized coordinates to Float32
+            // This is essential for meshopt files with KHR_mesh_quantization
+            bakedGeometry.applyMatrix4(mesh.matrixWorld);
+            
+            // Reset mesh transformations since we've "baked" them into the geometry
+            mesh.position.set(0, 0, 0);
+            mesh.rotation.set(0, 0, 0);
+            mesh.scale.set(1, 1, 1);
+            mesh.updateMatrixWorld(true);
+            
+            // Replace geometry with dequantized version
+            mesh.geometry = bakedGeometry;
+            
+            // Log geometry info AFTER dequantization
+            const posAttrAfter = mesh.geometry.attributes.position;
+            console.log('Points geometry (AFTER dequantization):', {
+                positionCount: posAttrAfter ? posAttrAfter.count : 0,
+                firstPositionValues: posAttrAfter && posAttrAfter.array ? Array.from(posAttrAfter.array.slice(0, 9)) : 'no array',
+                arrayType: posAttrAfter && posAttrAfter.array ? posAttrAfter.array.constructor.name : 'no array'
             });
             
             // Remove old point cloud
@@ -467,7 +477,8 @@ async function loadGLB(file) {
                 pointSize: pointCloud.material ? pointCloud.material.size : 'no material'
             });
             
-            // Store original data for filtering
+            // Store original data for filtering (AFTER dequantization - now Float32)
+            const posAttr = pointCloud.geometry.attributes.position;
             originalPointCount = posAttr ? posAttr.count : 0;
             originalPositions = posAttr && posAttr.array ? posAttr.array.slice() : null;
             if (pointCloud.geometry.attributes.color) {
@@ -475,6 +486,12 @@ async function loadGLB(file) {
             } else {
                 originalColors = null;
             }
+            
+            console.log('Original data stored for filtering:', {
+                pointCount: originalPointCount,
+                positionsType: originalPositions ? originalPositions.constructor.name : 'null',
+                hasColors: originalColors !== null
+            });
             
             // Update params
             params.maxPoints = originalPointCount;
