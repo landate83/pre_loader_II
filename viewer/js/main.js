@@ -358,55 +358,137 @@ async function loadGLB(file) {
             rotation: { x: originalRotation.x, y: originalRotation.y, z: originalRotation.z }
         });
         
-        // Извлекаем атрибуты
-        let positions = mesh.geometry.attributes.position;
-        let colors = mesh.geometry.attributes.color || mesh.geometry.attributes.COLOR_0;
-
-        // Если это уже Points, можно попробовать использовать геометрию напрямую
+        // Если это уже Points, используем его напрямую (сохраняем материал и цвета)
         if (mesh.isPoints) {
-            positions = mesh.geometry.attributes.position;
-            colors = mesh.geometry.attributes.color || mesh.geometry.attributes.COLOR_0;
-        } 
-        // Если это Mesh (треугольники), берем вершины
-        else if (mesh.isMesh) {
-            positions = mesh.geometry.attributes.position;
-            colors = mesh.geometry.attributes.COLOR_0 || mesh.geometry.attributes.color;
-        }
-
-        if (!positions) {
-            console.error('No position attribute found!');
-            alert('GLB file loaded but contains no position data');
-            return;
-        }
-
-        // 2. СОЗДАЕМ ОБЛАКО ТОЧЕК
-        createPointCloud(positions, colors);
-
-        // 3. ПРИМЕНЯЕМ СОХРАНЕННЫЕ ТРАНСФОРМАЦИИ К НОВОМУ ОБЪЕКТУ
-        if (pointCloud) {
+            console.log('GLB contains Points object, using it directly');
+            
+            // Remove old point cloud
+            if (pointCloud) {
+                scene.remove(pointCloud);
+                if (pointCloud.geometry) pointCloud.geometry.dispose();
+                if (pointCloud.material) pointCloud.material.dispose();
+            }
+            
+            pointCloud = mesh;
+            
+            // Применяем сохраненные трансформации (они уже есть, но убеждаемся)
             pointCloud.scale.copy(originalScale);
             pointCloud.position.copy(originalPosition);
             pointCloud.rotation.copy(originalRotation);
             
-            // Обновляем матрицу, чтобы шейдеры и BoundingBox работали корректно
+            // Обновляем матрицу
             pointCloud.updateMatrixWorld(true);
-
-            // 4. ОТКЛЮЧАЕМ CULLING (ОТСЕЧЕНИЕ)
-            // При анимации в шейдерах BoundingBox часто не успевает обновляться
-            // или рассчитывается неверно из-за квантования.
+            
+            // Отключаем culling
             pointCloud.frustumCulled = false;
             
-            console.log('Applied transformations to pointCloud:', {
+            // Убеждаемся, что материал правильно настроен
+            if (pointCloud.material) {
+                pointCloud.material.visible = true;
+                if (!pointCloud.material.size || pointCloud.material.size <= 0) {
+                    pointCloud.material.size = params.pointSize || 0.03;
+                }
+                if (pointCloud.material.opacity === undefined || pointCloud.material.opacity <= 0) {
+                    pointCloud.material.opacity = params.opacity || 1.0;
+                }
+                
+                // Критически важно: если есть цвета, включаем vertexColors
+                const hasColors = pointCloud.geometry.attributes.color !== undefined;
+                if (hasColors && pointCloud.material.isPointsMaterial) {
+                    pointCloud.material.vertexColors = true;
+                    pointCloud.material.color.set(0xffffff); // Белый цвет при использовании vertex colors
+                    params.colorMode = 'file'; // Устанавливаем режим цвета из файла
+                }
+                
+                pointCloud.material.needsUpdate = true;
+            }
+            
+            pointCloud.visible = true;
+            scene.add(pointCloud);
+            currentMaterial = pointCloud.material;
+            
+            // Store original data for filtering
+            const posAttr = pointCloud.geometry.attributes.position;
+            originalPointCount = posAttr ? posAttr.count : 0;
+            
+            if (posAttr && posAttr.array) {
+                originalPositions = posAttr.array.slice();
+            } else {
+                originalPositions = null;
+            }
+            
+            if (pointCloud.geometry.attributes.color) {
+                originalColors = pointCloud.geometry.attributes.color.array.slice();
+            } else {
+                originalColors = null;
+            }
+            
+            // Update params
+            params.maxPoints = originalPointCount;
+            params.pointPercent = 100;
+            
+            console.log('Using original Points object with transformations:', {
                 scale: { x: pointCloud.scale.x, y: pointCloud.scale.y, z: pointCloud.scale.z },
-                position: { x: pointCloud.position.x, y: pointCloud.position.y, z: pointCloud.position.z },
-                frustumCulled: pointCloud.frustumCulled
+                hasColors: !!pointCloud.geometry.attributes.color,
+                materialType: pointCloud.material ? pointCloud.material.constructor.name : 'no material',
+                frustumCulled: pointCloud.frustumCulled,
+                pointCount: originalPointCount,
+                vertexColors: pointCloud.material ? pointCloud.material.vertexColors : false
             });
+            
+            // Update GUI info
+            updateInfo(originalPointCount);
+            dropzone.classList.add('hidden');
+            if (!gui) initGUI();
+            
+            // Setup camera and apply animation (will be done in the common section below)
+        } 
+        // Если это Mesh (треугольники), создаем новый pointCloud
+        else if (mesh.isMesh) {
+            // Извлекаем атрибуты
+            const positions = mesh.geometry.attributes.position;
+            const colors = mesh.geometry.attributes.COLOR_0 || mesh.geometry.attributes.color;
+
+            if (!positions) {
+                console.error('No position attribute found!');
+                alert('GLB file loaded but contains no position data');
+                return;
+            }
+
+            // Создаем новое облако точек
+            createPointCloud(positions, colors);
+
+            // Применяем сохраненные трансформации к новому объекту
+            if (pointCloud) {
+                pointCloud.scale.copy(originalScale);
+                pointCloud.position.copy(originalPosition);
+                pointCloud.rotation.copy(originalRotation);
+                
+                // Обновляем матрицу
+                pointCloud.updateMatrixWorld(true);
+
+                // Отключаем culling
+                pointCloud.frustumCulled = false;
+                
+                console.log('Created new pointCloud with transformations:', {
+                    scale: { x: pointCloud.scale.x, y: pointCloud.scale.y, z: pointCloud.scale.z },
+                    hasColors: !!pointCloud.geometry.attributes.color,
+                    frustumCulled: pointCloud.frustumCulled
+                });
+            }
+        } else {
+            console.error('Unknown mesh type:', mesh.constructor.name);
+            alert('GLB file contains unsupported mesh type');
+            return;
         }
 
-        // Обновляем информацию GUI
-        updateInfo(positions.count);
-        dropzone.classList.add('hidden');
-        if (!gui) initGUI();
+        // Обновляем информацию GUI (только если еще не обновлено для mesh.isPoints)
+        if (!mesh.isPoints) {
+            const pointCount = pointCloud ? pointCloud.geometry.attributes.position.count : 0;
+            updateInfo(pointCount);
+            dropzone.classList.add('hidden');
+            if (!gui) initGUI();
+        }
 
         // Центрируем камеру (теперь это сработает, так как scale применен)
         if (pointCloud) {
@@ -462,33 +544,35 @@ async function loadGLB(file) {
             });
         }
         
-        // Store original data for filtering
-        const posAttr = pointCloud ? pointCloud.geometry.attributes.position : null;
-        originalPointCount = posAttr ? posAttr.count : 0;
-        
-        if (posAttr && posAttr.array) {
-            // Store positions as-is (Three.js will handle transformations)
-            originalPositions = posAttr.array.slice();
-            console.log('Original data stored for filtering:', {
-                pointCount: originalPointCount,
-                positionsType: originalPositions.constructor.name,
-                hasColors: pointCloud.geometry.attributes.color !== undefined
-            });
-        } else {
-            originalPositions = null;
+        // Store original data for filtering (только если еще не сохранено для mesh.isPoints)
+        if (!mesh.isPoints) {
+            const posAttr = pointCloud ? pointCloud.geometry.attributes.position : null;
+            originalPointCount = posAttr ? posAttr.count : 0;
+            
+            if (posAttr && posAttr.array) {
+                // Store positions as-is (Three.js will handle transformations)
+                originalPositions = posAttr.array.slice();
+                console.log('Original data stored for filtering:', {
+                    pointCount: originalPointCount,
+                    positionsType: originalPositions.constructor.name,
+                    hasColors: pointCloud.geometry.attributes.color !== undefined
+                });
+            } else {
+                originalPositions = null;
+            }
+            
+            if (pointCloud && pointCloud.geometry.attributes.color) {
+                originalColors = pointCloud.geometry.attributes.color.array.slice();
+            } else {
+                originalColors = null;
+            }
+            
+            // Update params
+            params.maxPoints = originalPointCount;
+            params.pointPercent = 100;
         }
         
-        if (pointCloud && pointCloud.geometry.attributes.color) {
-            originalColors = pointCloud.geometry.attributes.color.array.slice();
-        } else {
-            originalColors = null;
-        }
-        
-        // Update params
-        params.maxPoints = originalPointCount;
-        params.pointPercent = 100;
-        
-        // Apply animation if needed
+        // Apply animation if needed (для всех случаев)
         applyAnimation(params.animation);
         currentAnimation = params.animation;
 
