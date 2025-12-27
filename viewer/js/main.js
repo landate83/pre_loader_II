@@ -53,6 +53,8 @@ let originalPointCount = 0; // Store original point count
 
 // Default scenes list (will be loaded dynamically from server)
 let defaultScenes = [];
+// Current custom file name (if loaded, not added to defaultScenes)
+let currentCustomFileName = null;
 
 // Debounced camera position update for URL
 let cameraUpdateTimeout = null;
@@ -232,6 +234,9 @@ fileInput.addEventListener('change', (e) => {
 
 // Load file from URL
 async function loadFileFromURL(url, filename) {
+    // Clear custom file name when loading from URL (default scenes)
+    currentCustomFileName = null;
+    
     // Remove old point cloud immediately before loading new one
     if (pointCloud) {
         console.log('🟡 [DEBUG] Removing old point cloud before loading new file from URL...');
@@ -273,6 +278,22 @@ async function loadFileFromURL(url, filename) {
 function loadFile(file) {
     const ext = file.name.toLowerCase().split('.').pop();
     fileSize = file.size;
+    
+    // Store custom file name and update selectedScene display
+    currentCustomFileName = file.name;
+    params.selectedScene = file.name;
+    
+    // Update selectedSceneCtrl to show custom file name
+    // Add custom file name to options temporarily for display, but don't add to defaultScenes
+    if (selectedSceneCtrl) {
+        const displayOptions = [...defaultScenes];
+        if (!displayOptions.includes(file.name)) {
+            displayOptions.push(file.name);
+        }
+        selectedSceneCtrl.options(displayOptions);
+        params.selectedScene = file.name;
+        selectedSceneCtrl.updateDisplay();
+    }
     
     if (ext === 'glb') {
         loadGLB(file);
@@ -1223,7 +1244,16 @@ function initGUI() {
     params.selectedScene = defaultScenes.length > 0 ? defaultScenes[0] : '';
     selectedSceneCtrl = sceneFolder.add(params, 'selectedScene', defaultScenes).name('Default Scene');
     selectedSceneCtrl.onChange((value) => {
-        if (!value || !defaultScenes.includes(value)) return;
+        if (!value) return;
+        
+        // If value is a custom file (not in defaultScenes), don't load from default_scenes
+        if (!defaultScenes.includes(value)) {
+            // This is a custom file, already loaded, just return
+            return;
+        }
+        
+        // Clear custom file name when selecting default scene
+        currentCustomFileName = null;
         
         // Remove old point cloud immediately before loading new one
         if (pointCloud) {
@@ -2826,19 +2856,30 @@ initGUI();
         if (selectedSceneCtrl) {
             console.log('🟢 [DEBUG] Updating selectedSceneCtrl options...');
             // Update the controller options
-            selectedSceneCtrl.options(defaultScenes);
+            // If there's a custom file loaded, include it in display options but not in defaultScenes
+            const displayOptions = currentCustomFileName && !defaultScenes.includes(currentCustomFileName)
+                ? [...defaultScenes, currentCustomFileName]
+                : defaultScenes;
+            selectedSceneCtrl.options(displayOptions);
             console.log('🟢 [DEBUG] Options updated');
             
-            // Check if we have a scene from URL, otherwise use first default scene
-            const modelParam = getURLParameter('model');
-            if (modelParam && defaultScenes.includes(modelParam)) {
-                // Use scene from URL
-                params.selectedScene = modelParam;
-                console.log('🟢 [DEBUG] Using scene from URL:', params.selectedScene);
+            // Preserve custom file name if it's currently selected
+            if (currentCustomFileName && params.selectedScene === currentCustomFileName) {
+                // Keep custom file name selected
+                params.selectedScene = currentCustomFileName;
+                console.log('🟢 [DEBUG] Preserving custom file selection:', currentCustomFileName);
             } else {
-                // Set default scene
-                params.selectedScene = defaultScenes[0];
-                console.log('🟢 [DEBUG] Set default scene to:', params.selectedScene);
+                // Check if we have a scene from URL, otherwise use first default scene
+                const modelParam = getURLParameter('model');
+                if (modelParam && defaultScenes.includes(modelParam)) {
+                    // Use scene from URL
+                    params.selectedScene = modelParam;
+                    console.log('🟢 [DEBUG] Using scene from URL:', params.selectedScene);
+                } else {
+                    // Set default scene
+                    params.selectedScene = defaultScenes[0];
+                    console.log('🟢 [DEBUG] Set default scene to:', params.selectedScene);
+                }
             }
             
             // Update display to reflect the selected scene
