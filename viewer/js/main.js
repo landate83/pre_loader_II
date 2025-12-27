@@ -5,6 +5,9 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.js';
 
+// Application version
+const APP_VERSION = '0.0.1';
+
 // ==================== Three.js Initialization ====================
 
 const canvas = document.getElementById('canvas');
@@ -1554,6 +1557,19 @@ function initGUI() {
     });
     
     animFolder.open();
+    
+    // Add version info at the bottom of the panel
+    const versionElement = document.createElement('div');
+    versionElement.textContent = `Version ${APP_VERSION}`;
+    versionElement.style.cssText = `
+        padding: 8px 12px;
+        font-size: 11px;
+        color: #888;
+        text-align: center;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        margin-top: 8px;
+    `;
+    gui.domElement.appendChild(versionElement);
     
 }
 
