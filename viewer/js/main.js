@@ -316,11 +316,8 @@ async function loadGLB(file) {
     dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
     loader.setDRACOLoader(dracoLoader);
 
-    // Setup MeshoptDecoder for EXT_meshopt_compression (standard Three.js support)
-    // MUST be set before parsing any files
-    // Using static import from top of file
+    // Setup MeshoptDecoder for EXT_meshopt_compression
     if (MeshoptDecoder) {
-        // Check if ready() method exists and call it if available (for WASM versions)
         if (typeof MeshoptDecoder.ready === 'function') {
             await MeshoptDecoder.ready();
         }
@@ -328,7 +325,6 @@ async function loadGLB(file) {
         console.log('✅ MeshoptDecoder set successfully on GLTFLoader');
     } else {
         console.error('❌ MeshoptDecoder import failed - decoder is undefined');
-        console.error('Files with EXT_meshopt_compression will not load correctly');
     }
     
     // Read file as ArrayBuffer
@@ -341,132 +337,109 @@ async function loadGLB(file) {
     
     // Parse GLB after decoder is set up
     loader.parse(arrayBuffer, '', (gltf) => {
-        console.log('GLB loaded successfully:', gltf);
+        console.log('GLB loaded successfully');
         
         const mesh = gltf.scene.children[0];
-        if (!mesh || !mesh.geometry) {
+        if (!mesh) {
             console.error('No mesh found in scene!');
             alert('GLB file loaded but contains no mesh');
             return;
         }
+
+        // 1. СОХРАНЯЕМ ТРАНСФОРМАЦИИ ИСХОДНОГО МЕША
+        // Это критически важно для Meshopt/Quantization
+        const originalScale = mesh.scale.clone();
+        const originalPosition = mesh.position.clone();
+        const originalRotation = mesh.rotation.clone();
         
-        console.log('Mesh type:', mesh.constructor.name, 'isPoints:', mesh.isPoints);
+        console.log('Original mesh transformations:', {
+            scale: { x: originalScale.x, y: originalScale.y, z: originalScale.z },
+            position: { x: originalPosition.x, y: originalPosition.y, z: originalPosition.z },
+            rotation: { x: originalRotation.x, y: originalRotation.y, z: originalRotation.z }
+        });
         
-        // If it's already a Points object, try using it directly
+        // Извлекаем атрибуты
+        let positions = mesh.geometry.attributes.position;
+        let colors = mesh.geometry.attributes.color || mesh.geometry.attributes.COLOR_0;
+
+        // Если это уже Points, можно попробовать использовать геометрию напрямую
         if (mesh.isPoints) {
-            console.log('GLB contains Points object, using it directly');
+            positions = mesh.geometry.attributes.position;
+            colors = mesh.geometry.attributes.color || mesh.geometry.attributes.COLOR_0;
+        } 
+        // Если это Mesh (треугольники), берем вершины
+        else if (mesh.isMesh) {
+            positions = mesh.geometry.attributes.position;
+            colors = mesh.geometry.attributes.COLOR_0 || mesh.geometry.attributes.color;
+        }
+
+        if (!positions) {
+            console.error('No position attribute found!');
+            alert('GLB file loaded but contains no position data');
+            return;
+        }
+
+        // 2. СОЗДАЕМ ОБЛАКО ТОЧЕК
+        createPointCloud(positions, colors);
+
+        // 3. ПРИМЕНЯЕМ СОХРАНЕННЫЕ ТРАНСФОРМАЦИИ К НОВОМУ ОБЪЕКТУ
+        if (pointCloud) {
+            pointCloud.scale.copy(originalScale);
+            pointCloud.position.copy(originalPosition);
+            pointCloud.rotation.copy(originalRotation);
             
-            // Log material info
-            console.log('Points material:', {
-                type: mesh.material.constructor.name,
-                size: mesh.material.size,
-                opacity: mesh.material.opacity,
-                vertexColors: mesh.material.vertexColors,
-                visible: mesh.material.visible,
-                transparent: mesh.material.transparent
+            // Обновляем матрицу, чтобы шейдеры и BoundingBox работали корректно
+            pointCloud.updateMatrixWorld(true);
+
+            // 4. ОТКЛЮЧАЕМ CULLING (ОТСЕЧЕНИЕ)
+            // При анимации в шейдерах BoundingBox часто не успевает обновляться
+            // или рассчитывается неверно из-за квантования.
+            pointCloud.frustumCulled = false;
+            
+            console.log('Applied transformations to pointCloud:', {
+                scale: { x: pointCloud.scale.x, y: pointCloud.scale.y, z: pointCloud.scale.z },
+                position: { x: pointCloud.position.x, y: pointCloud.position.y, z: pointCloud.position.z },
+                frustumCulled: pointCloud.frustumCulled
             });
-            
-            // Log geometry info BEFORE dequantization
-            const posAttrBefore = mesh.geometry.attributes.position;
-            console.log('Points geometry (BEFORE dequantization):', {
-                positionCount: posAttrBefore ? posAttrBefore.count : 0,
-                hasColors: !!mesh.geometry.attributes.color,
-                firstPositionValues: posAttrBefore && posAttrBefore.array ? Array.from(posAttrBefore.array.slice(0, 9)) : 'no array',
-                arrayType: posAttrBefore && posAttrBefore.array ? posAttrBefore.array.constructor.name : 'no array'
-            });
-            
-            // === CRITICAL: For meshopt files with KHR_mesh_quantization ===
-            // Meshopt files store coordinates as quantized integers (Uint16/Int16)
-            // with a transformation matrix (scale/offset) to convert to real coordinates.
-            // Three.js applies the matrix automatically during rendering via matrixWorld.
-            // We keep the object as-is for rendering, but need to handle dequantization
-            // for filtering/shader logic if coordinates are still quantized.
-            
-            // Ensure matrix is up to date (Three.js will use it for rendering)
-            mesh.updateMatrixWorld(true);
-            
-            // Remove old point cloud
-            if (pointCloud) {
-                scene.remove(pointCloud);
-                if (pointCloud.geometry) pointCloud.geometry.dispose();
-                if (pointCloud.material) pointCloud.material.dispose();
-            }
-            
-            pointCloud = mesh;
-            
-            // Ensure material is properly configured
-            if (pointCloud.material) {
-                // Make sure material is visible and has proper settings
-                pointCloud.material.visible = true;
-                if (!pointCloud.material.size || pointCloud.material.size <= 0) {
-                    console.warn('Material size is invalid, setting to default');
-                    pointCloud.material.size = params.pointSize || 0.03;
-                }
-                if (pointCloud.material.opacity === undefined || pointCloud.material.opacity <= 0) {
-                    console.warn('Material opacity is invalid, setting to default');
-                    pointCloud.material.opacity = params.opacity || 1.0;
-                }
-                pointCloud.material.needsUpdate = true;
-            }
-            
-            // Ensure point cloud is visible
-            pointCloud.visible = true;
-            
-            scene.add(pointCloud);
-            currentMaterial = pointCloud.material;
-            
-            console.log('Point cloud added to scene:', {
-                inScene: scene.children.includes(pointCloud),
-                visible: pointCloud.visible,
-                materialVisible: pointCloud.material ? pointCloud.material.visible : 'no material'
-            });
-            
-            // Update camera
-            // Use Box3().setFromObject() like three-gltf-viewer does
-            // This automatically accounts for object's transformation matrix
+        }
+
+        // Обновляем информацию GUI
+        updateInfo(positions.count);
+        dropzone.classList.add('hidden');
+        if (!gui) initGUI();
+
+        // Центрируем камеру (теперь это сработает, так как scale применен)
+        if (pointCloud) {
+            // Пересчитываем Bounding Box уже с учетом Scale
+            // Важно: geometry.boundingBox хранит "сырые" данные, 
+            // нам нужен Box3, учитывающий трансформации объекта
             pointCloud.updateMatrixWorld(true);
             const box = new THREE.Box3().setFromObject(pointCloud);
             
-            // Get position attribute for error logging
-            const posAttr = pointCloud.geometry.attributes.position;
-            
-            // Check if bounding box is valid (not empty and has valid values)
+            // Check if bounding box is valid
             if (box.isEmpty() || !isFinite(box.min.x) || !isFinite(box.max.x)) {
                 console.error('Invalid bounding box computed!');
+                const posAttr = pointCloud.geometry.attributes.position;
                 const firstValues = posAttr && posAttr.array ? Array.from(posAttr.array.slice(0, 9)) : 'no array';
                 console.error('Position array first 9 values:', firstValues);
                 console.error('Position array type:', posAttr && posAttr.array ? posAttr.array.constructor.name : 'no array');
-                console.error('Position attribute details:', {
-                    count: posAttr ? posAttr.count : 0,
-                    itemSize: posAttr ? posAttr.itemSize : 0,
-                    normalized: posAttr ? posAttr.normalized : false
-                });
                 console.error('Bounding box:', {
                     min: { x: box.min.x, y: box.min.y, z: box.min.z },
                     max: { x: box.max.x, y: box.max.y, z: box.max.z },
                     isEmpty: box.isEmpty()
                 });
-                
-                // Check if values look quantized (large integers)
-                if (firstValues !== 'no array' && firstValues.length > 0) {
-                    const firstVal = Math.abs(firstValues[0]);
-                    const isQuantized = firstVal > 1000 && firstVal < 32768 && Number.isInteger(firstVal);
-                    console.error('Values appear quantized (integers):', isQuantized);
-                    console.error('This suggests dequantization did not work properly');
-                }
             }
             
             const center = box.getCenter(new THREE.Vector3());
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
             
-            console.log('Bounding box (direct Points, using setFromObject):', {
+            console.log('Bounding box (with transformations):', {
                 min: { x: box.min.x, y: box.min.y, z: box.min.z },
                 max: { x: box.max.x, y: box.max.y, z: box.max.z },
                 center: { x: center.x, y: center.y, z: center.z },
                 size: { x: size.x, y: size.y, z: size.z },
-                maxDim: maxDim,
-                isEmpty: box.isEmpty()
+                maxDim: maxDim
             });
             
             const fov = camera.fov * (Math.PI / 180);
@@ -482,102 +455,43 @@ async function loadGLB(file) {
             controls.target.copy(center);
             controls.update();
             
-            console.log('Camera setup (direct Points):', {
+            console.log('Camera setup:', {
                 position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                 target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
-                cameraZ: cameraZ,
-                pointSize: pointCloud.material ? pointCloud.material.size : 'no material'
+                cameraZ: cameraZ
             });
-            
-            // Store original data for filtering
-            // Check if coordinates need dequantization (Uint16Array/Int16Array)
-            // posAttr is already defined above for error logging
-            originalPointCount = posAttr ? posAttr.count : 0;
-            
-            const posArray = posAttr && posAttr.array ? posAttr.array : null;
-            if (posArray) {
-                const arrayType = posArray.constructor.name;
-                console.log('Position array type for filtering:', arrayType);
-                
-                // Check if coordinates are quantized (Uint16Array or Int16Array)
-                if (arrayType === 'Uint16Array' || arrayType === 'Int16Array') {
-                    console.log('Coordinates are quantized, dequantizing for filtering...');
-                    // Dequantize using matrix transformation
-                    // Apply matrix to each point to get Float32 coordinates
-                    const dequantized = new Float32Array(posArray.length);
-                    const matrix = pointCloud.matrixWorld;
-                    
-                    for (let i = 0; i < posArray.length; i += 3) {
-                        const x = posArray[i];
-                        const y = posArray[i + 1];
-                        const z = posArray[i + 2];
-                        
-                        // Apply matrix transformation
-                        const vec = new THREE.Vector3(x, y, z);
-                        vec.applyMatrix4(matrix);
-                        
-                        dequantized[i] = vec.x;
-                        dequantized[i + 1] = vec.y;
-                        dequantized[i + 2] = vec.z;
-                    }
-                    
-                    originalPositions = dequantized;
-                    console.log('Coordinates dequantized for filtering. First values:', Array.from(dequantized.slice(0, 9)));
-                } else {
-                    // Already Float32Array, use as-is
-                    originalPositions = posArray.slice();
-                    console.log('Coordinates are already Float32, using as-is');
-                }
-            } else {
-                originalPositions = null;
-            }
-            
-            if (pointCloud.geometry.attributes.color) {
-                originalColors = pointCloud.geometry.attributes.color.array.slice();
-            } else {
-                originalColors = null;
-            }
-            
+        }
+        
+        // Store original data for filtering
+        const posAttr = pointCloud ? pointCloud.geometry.attributes.position : null;
+        originalPointCount = posAttr ? posAttr.count : 0;
+        
+        if (posAttr && posAttr.array) {
+            // Store positions as-is (Three.js will handle transformations)
+            originalPositions = posAttr.array.slice();
             console.log('Original data stored for filtering:', {
                 pointCount: originalPointCount,
-                positionsType: originalPositions ? originalPositions.constructor.name : 'null',
-                hasColors: originalColors !== null
+                positionsType: originalPositions.constructor.name,
+                hasColors: pointCloud.geometry.attributes.color !== undefined
             });
-            
-            // Update params
-            params.maxPoints = originalPointCount;
-            params.pointPercent = 100;
-            
-            updateInfo(originalPointCount);
-            dropzone.classList.add('hidden');
-            if (!gui) {
-                initGUI();
-            }
-            
-            // Apply animation if needed
-            applyAnimation(params.animation);
-            currentAnimation = params.animation;
-            
-            return;
+        } else {
+            originalPositions = null;
         }
         
-        // Otherwise, extract attributes and create new point cloud
-        const geometry = mesh.geometry;
-        const positions = geometry.attributes.position;
-        if (!positions) {
-            console.error('No position attribute found!');
-            alert('GLB file loaded but contains no position data');
-            return;
+        if (pointCloud && pointCloud.geometry.attributes.color) {
+            originalColors = pointCloud.geometry.attributes.color.array.slice();
+        } else {
+            originalColors = null;
         }
         
-        const colors = geometry.attributes.COLOR_0 || geometry.attributes.color;
+        // Update params
+        params.maxPoints = originalPointCount;
+        params.pointPercent = 100;
         
-        createPointCloud(positions, colors);
-        updateInfo(positions.count);
-        dropzone.classList.add('hidden');
-        if (!gui) {
-            initGUI();
-        }
+        // Apply animation if needed
+        applyAnimation(params.animation);
+        currentAnimation = params.animation;
+
     }, (error) => {
         console.error('Error loading GLB:', error);
         alert('Error loading GLB file:\n' + (error.message || 'Unknown error'));
