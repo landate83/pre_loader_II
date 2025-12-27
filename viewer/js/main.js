@@ -424,6 +424,9 @@ async function loadGLB(file) {
             pointCloud.geometry.computeBoundingBox();
             const box = pointCloud.geometry.boundingBox;
             
+            // Get position attribute for error logging
+            const posAttr = pointCloud.geometry.attributes.position;
+            
             if (!box || !box.isValid || isNaN(box.min.x)) {
                 console.error('Invalid bounding box computed!');
                 const firstValues = posAttr && posAttr.array ? Array.from(posAttr.array.slice(0, 9)) : 'no array';
@@ -440,7 +443,7 @@ async function loadGLB(file) {
                     const firstVal = Math.abs(firstValues[0]);
                     const isQuantized = firstVal > 1000 && firstVal < 32768 && Number.isInteger(firstVal);
                     console.error('Values appear quantized (integers):', isQuantized);
-                    console.error('This suggests MeshoptDecoder did not properly decompress the data');
+                    console.error('This suggests dequantization did not work properly');
                 }
             }
             
@@ -478,7 +481,7 @@ async function loadGLB(file) {
             });
             
             // Store original data for filtering (AFTER dequantization - now Float32)
-            const posAttr = pointCloud.geometry.attributes.position;
+            // posAttr is already defined above for error logging
             originalPointCount = posAttr ? posAttr.count : 0;
             originalPositions = posAttr && posAttr.array ? posAttr.array.slice() : null;
             if (pointCloud.geometry.attributes.color) {
