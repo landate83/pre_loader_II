@@ -406,7 +406,8 @@ async function loadGLB(file) {
             // Get position attribute for error logging
             const posAttr = pointCloud.geometry.attributes.position;
             
-            if (!box || !box.isEmpty() || isNaN(box.min.x)) {
+            // Check if bounding box is valid (not empty and has valid values)
+            if (box.isEmpty() || !isFinite(box.min.x) || !isFinite(box.max.x)) {
                 console.error('Invalid bounding box computed!');
                 const firstValues = posAttr && posAttr.array ? Array.from(posAttr.array.slice(0, 9)) : 'no array';
                 console.error('Position array first 9 values:', firstValues);
@@ -415,6 +416,11 @@ async function loadGLB(file) {
                     count: posAttr ? posAttr.count : 0,
                     itemSize: posAttr ? posAttr.itemSize : 0,
                     normalized: posAttr ? posAttr.normalized : false
+                });
+                console.error('Bounding box:', {
+                    min: { x: box.min.x, y: box.min.y, z: box.min.z },
+                    max: { x: box.max.x, y: box.max.y, z: box.max.z },
+                    isEmpty: box.isEmpty()
                 });
                 
                 // Check if values look quantized (large integers)
@@ -1933,7 +1939,8 @@ function getVertexShader(type, hasColors = true) {
         animationCode = `
             uniform float uPointSize;
             void main() {
-                vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                // Handle both vec3 (RGB) and vec4 (RGBA) color attributes
+                vColor = ${hasColors ? 'vec3(color.rgb)' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0; // No wave intensity for 'none' animation
                 vec3 pos = position;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
@@ -1945,7 +1952,8 @@ function getVertexShader(type, hasColors = true) {
             uniform float uDropHeight;
             uniform float uPointSize;
             void main() {
-                vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                // Handle both vec3 (RGB) and vec4 (RGBA) color attributes
+                vColor = ${hasColors ? 'vec3(color.rgb)' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0;
                 float delay = fract(hash(float(gl_VertexID)) * uDuration * 0.5);
                 float t = clamp((uTime * uSpeed - delay) / uDuration, 0.0, 1.0);
@@ -1992,7 +2000,8 @@ function getVertexShader(type, hasColors = true) {
                 }
                 
                 // Mix original color (if exists) with wave color based on animation progress
-                vec3 baseColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                // Handle both vec3 (RGB) and vec4 (RGBA) color attributes
+                vec3 baseColor = ${hasColors ? 'vec3(color.rgb)' : 'vec3(1.0, 1.0, 1.0)'};
                 vColor = mix(baseColor, waveColor, t * 0.8); // Blend 80% wave color when animated
                 
                 vec3 pos = position + vec3(0.0, wave, 0.0);
@@ -2006,7 +2015,8 @@ function getVertexShader(type, hasColors = true) {
             uniform float uRotationSpeed;
             uniform float uPointSize;
             void main() {
-                vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                // Handle both vec3 (RGB) and vec4 (RGBA) color attributes
+                vColor = ${hasColors ? 'vec3(color.rgb)' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0;
                 float delay = fract(hash(float(gl_VertexID)) * uDuration * 0.5);
                 float t = clamp((uTime * uSpeed - delay) / uDuration, 0.0, 1.0);
@@ -2025,7 +2035,8 @@ function getVertexShader(type, hasColors = true) {
             uniform float uExplosionRadius;
             uniform float uPointSize;
             void main() {
-                vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                // Handle both vec3 (RGB) and vec4 (RGBA) color attributes
+                vColor = ${hasColors ? 'vec3(color.rgb)' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0;
                 float delay = fract(hash(float(gl_VertexID)) * uDuration * 0.5);
                 float t = clamp((uTime * uSpeed - delay) / uDuration, 0.0, 1.0);
@@ -2042,7 +2053,8 @@ function getVertexShader(type, hasColors = true) {
             uniform float uNoiseAmplitude;
             uniform float uPointSize;
             void main() {
-                vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                // Handle both vec3 (RGB) and vec4 (RGBA) color attributes
+                vColor = ${hasColors ? 'vec3(color.rgb)' : 'vec3(1.0, 1.0, 1.0)'};
                 vWaveIntensity = 0.0;
                 float delay = fract(hash(float(gl_VertexID)) * uDuration * 0.5);
                 float t = clamp((uTime * uSpeed - delay) / uDuration, 0.0, 1.0);
@@ -2140,7 +2152,8 @@ function getVertexShader(type, hasColors = true) {
                 vWaveIntensity = intensity;
                 
                 // Base color (will be modified in fragment shader)
-                vColor = ${hasColors ? 'color' : 'vec3(1.0, 1.0, 1.0)'};
+                // Handle both vec3 (RGB) and vec4 (RGBA) color attributes
+                vColor = ${hasColors ? 'vec3(color.rgb)' : 'vec3(1.0, 1.0, 1.0)'};
                 
                 // Displace particles along selected axis based on wave intensity and displacement amount
                 // Normalize displacement: map from 0-10 to actual displacement (0.0 to 1.0 units)
