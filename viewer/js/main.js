@@ -5,6 +5,11 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.js';
 
+// Keyframe animation system
+import { store } from './store.js';
+import { KeyframeManager } from './KeyframeManager.js';
+import { KeyframeAnimator } from './KeyframeAnimator.js';
+
 // Application version
 const APP_VERSION = '0.0.1';
 
@@ -22,6 +27,11 @@ renderer.setClearColor('#1a1a2e'); // Set initial background color
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
+
+// Set default camera position (will be overridden when loading a model)
+camera.position.set(0, 2, 10);
+controls.target.set(0, 0, 0);
+controls.update();
 
 // Update URL when camera position changes (debounced)
 controls.addEventListener('change', () => {
@@ -97,19 +107,19 @@ const params = {
         try {
             // Get current URL with all parameters
             const currentURL = window.location.href;
-            
+
             // Show loading notification
             showNotification('Creating short link...', 'info');
-            
+
             // Try to shorten URL
             const shortURL = await shortenURL(currentURL);
-            
+
             // Use short URL if available, otherwise use original
             const urlToCopy = shortURL || currentURL;
-            
+
             // Copy to clipboard
             const copied = await copyToClipboard(urlToCopy);
-            
+
             if (copied) {
                 if (shortURL) {
                     showNotification('Short link copied to clipboard!', 'success');
@@ -144,6 +154,19 @@ let maxPointsCtrl = null;
 let pointPercentCtrl = null;
 let estimatedFileSizeCtrl = null;
 let selectedSceneCtrl = null;
+
+// ==================== Keyframe Animation System ====================
+
+// Initialize keyframe manager and animator
+let keyframeManager = null;
+let keyframeAnimator = null;
+
+// Will be initialized after camera and controls are ready
+function initKeyframeSystem() {
+    keyframeManager = new KeyframeManager(params, camera, controls);
+    keyframeAnimator = new KeyframeAnimator(keyframeManager, applyViewerState);
+    console.log('✅ Keyframe animation system initialized');
+}
 
 // ==================== File Loading ====================
 
@@ -191,7 +214,7 @@ function handleDrop(e) {
     e.stopPropagation();
     dragCounter = 0;
     dropzone.classList.remove('drag-active');
-    
+
     const files = e.dataTransfer.files;
     if (files.length > 0) {
         const file = files[0];
@@ -239,7 +262,7 @@ fileInput.addEventListener('change', (e) => {
 async function loadFileFromURL(url, filename) {
     // Clear custom file name when loading from URL (default scenes)
     currentCustomFileName = null;
-    
+
     // Remove old point cloud immediately before loading new one
     if (pointCloud) {
         console.log('🟡 [DEBUG] Removing old point cloud before loading new file from URL...');
@@ -249,7 +272,7 @@ async function loadFileFromURL(url, filename) {
         pointCloud = null;
         currentMaterial = null;
     }
-    
+
     try {
         const response = await fetch(url);
         if (!response.ok) {
@@ -258,7 +281,7 @@ async function loadFileFromURL(url, filename) {
         const blob = await response.blob();
         fileSize = blob.size;
         const file = new File([blob], filename, { type: blob.type });
-        
+
         const ext = filename.toLowerCase().split('.').pop();
         if (ext === 'glb') {
             loadGLB(file);
@@ -281,11 +304,11 @@ async function loadFileFromURL(url, filename) {
 function loadFile(file) {
     const ext = file.name.toLowerCase().split('.').pop();
     fileSize = file.size;
-    
+
     // Store custom file name and update selectedScene display
     currentCustomFileName = file.name;
     params.selectedScene = file.name;
-    
+
     // Update selectedSceneCtrl to show custom file name
     // Add custom file name to options temporarily for display, but don't add to defaultScenes
     if (selectedSceneCtrl) {
@@ -297,7 +320,7 @@ function loadFile(file) {
         params.selectedScene = file.name;
         selectedSceneCtrl.updateDisplay();
     }
-    
+
     if (ext === 'glb') {
         loadGLB(file);
     } else if (ext === 'ply' || ext === 'sog') {
@@ -326,7 +349,7 @@ async function loadGLB(file) {
     } else {
         console.error('❌ MeshoptDecoder import failed - decoder is undefined');
     }
-    
+
     // Read file as ArrayBuffer
     const arrayBuffer = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -334,11 +357,11 @@ async function loadGLB(file) {
         reader.onerror = () => reject(new Error('Error reading file'));
         reader.readAsArrayBuffer(file);
     });
-    
+
     // Parse GLB after decoder is set up
     loader.parse(arrayBuffer, '', (gltf) => {
         console.log('GLB loaded successfully');
-        
+
         const mesh = gltf.scene.children[0];
         if (!mesh) {
             console.error('No mesh found in scene!');
@@ -351,37 +374,37 @@ async function loadGLB(file) {
         const originalScale = mesh.scale.clone();
         const originalPosition = mesh.position.clone();
         const originalRotation = mesh.rotation.clone();
-        
+
         console.log('Original mesh transformations:', {
             scale: { x: originalScale.x, y: originalScale.y, z: originalScale.z },
             position: { x: originalPosition.x, y: originalPosition.y, z: originalPosition.z },
             rotation: { x: originalRotation.x, y: originalRotation.y, z: originalRotation.z }
         });
-        
+
         // Если это уже Points, используем его напрямую (сохраняем материал и цвета)
         if (mesh.isPoints) {
             console.log('GLB contains Points object, using it directly');
-            
+
             // Remove old point cloud
             if (pointCloud) {
                 scene.remove(pointCloud);
                 if (pointCloud.geometry) pointCloud.geometry.dispose();
                 if (pointCloud.material) pointCloud.material.dispose();
             }
-            
+
             pointCloud = mesh;
-            
+
             // Применяем сохраненные трансформации (они уже есть, но убеждаемся)
             pointCloud.scale.copy(originalScale);
             pointCloud.position.copy(originalPosition);
             pointCloud.rotation.copy(originalRotation);
-            
+
             // Обновляем матрицу
             pointCloud.updateMatrixWorld(true);
-            
+
             // Отключаем culling
             pointCloud.frustumCulled = false;
-            
+
             // Убеждаемся, что материал правильно настроен
             if (pointCloud.material) {
                 pointCloud.material.visible = true;
@@ -391,7 +414,7 @@ async function loadGLB(file) {
                 if (pointCloud.material.opacity === undefined || pointCloud.material.opacity <= 0) {
                     pointCloud.material.opacity = params.opacity || 1.0;
                 }
-                
+
                 // Критически важно: если есть цвета, включаем vertexColors
                 const hasColors = pointCloud.geometry.attributes.color !== undefined;
                 if (hasColors && pointCloud.material.isPointsMaterial) {
@@ -399,34 +422,34 @@ async function loadGLB(file) {
                     pointCloud.material.color.set(0xffffff); // Белый цвет при использовании vertex colors
                     params.colorMode = 'file'; // Устанавливаем режим цвета из файла
                 }
-                
+
                 pointCloud.material.needsUpdate = true;
             }
-            
+
             pointCloud.visible = true;
             scene.add(pointCloud);
             currentMaterial = pointCloud.material;
-            
+
             // Store original data for filtering
             const posAttr = pointCloud.geometry.attributes.position;
             originalPointCount = posAttr ? posAttr.count : 0;
-            
+
             if (posAttr && posAttr.array) {
                 originalPositions = posAttr.array.slice();
             } else {
                 originalPositions = null;
             }
-            
+
             if (pointCloud.geometry.attributes.color) {
                 originalColors = pointCloud.geometry.attributes.color.array.slice();
             } else {
                 originalColors = null;
             }
-            
+
             // Update params
             params.maxPoints = originalPointCount;
             params.pointPercent = 100;
-            
+
             console.log('Using original Points object with transformations:', {
                 scale: { x: pointCloud.scale.x, y: pointCloud.scale.y, z: pointCloud.scale.z },
                 hasColors: !!pointCloud.geometry.attributes.color,
@@ -435,14 +458,14 @@ async function loadGLB(file) {
                 pointCount: originalPointCount,
                 vertexColors: pointCloud.material ? pointCloud.material.vertexColors : false
             });
-            
+
             // Update GUI info
             updateInfo(originalPointCount);
             dropzone.classList.add('hidden');
             if (!gui) initGUI();
-            
+
             // Setup camera and apply animation (will be done in the common section below)
-        } 
+        }
         // Если это Mesh (треугольники), создаем новый pointCloud
         else if (mesh.isMesh) {
             // Извлекаем атрибуты
@@ -463,13 +486,13 @@ async function loadGLB(file) {
                 pointCloud.scale.copy(originalScale);
                 pointCloud.position.copy(originalPosition);
                 pointCloud.rotation.copy(originalRotation);
-                
+
                 // Обновляем матрицу
                 pointCloud.updateMatrixWorld(true);
 
                 // Отключаем culling
                 pointCloud.frustumCulled = false;
-                
+
                 console.log('Created new pointCloud with transformations:', {
                     scale: { x: pointCloud.scale.x, y: pointCloud.scale.y, z: pointCloud.scale.z },
                     hasColors: !!pointCloud.geometry.attributes.color,
@@ -497,7 +520,7 @@ async function loadGLB(file) {
             // нам нужен Box3, учитывающий трансформации объекта
             pointCloud.updateMatrixWorld(true);
             const box = new THREE.Box3().setFromObject(pointCloud);
-            
+
             // Check if bounding box is valid
             if (box.isEmpty() || !isFinite(box.min.x) || !isFinite(box.max.x)) {
                 console.error('Invalid bounding box computed!');
@@ -511,11 +534,11 @@ async function loadGLB(file) {
                     isEmpty: box.isEmpty()
                 });
             }
-            
+
             const center = box.getCenter(new THREE.Vector3());
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
-            
+
             console.log('Bounding box (with transformations):', {
                 min: { x: box.min.x, y: box.min.y, z: box.min.z },
                 max: { x: box.max.x, y: box.max.y, z: box.max.z },
@@ -523,32 +546,32 @@ async function loadGLB(file) {
                 size: { x: size.x, y: size.y, z: size.z },
                 maxDim: maxDim
             });
-            
+
             const fov = camera.fov * (Math.PI / 180);
             let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
-            
+
             // Ensure camera distance is valid
             if (!isFinite(cameraZ) || cameraZ <= 0 || cameraZ > 1e6) {
                 console.warn('Invalid camera distance, using fallback');
                 cameraZ = maxDim > 0 ? maxDim * 2 : 10;
             }
-            
+
             camera.position.set(center.x, center.y, center.z + cameraZ);
             controls.target.copy(center);
             controls.update();
-            
+
             console.log('Camera setup:', {
                 position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                 target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
                 cameraZ: cameraZ
             });
         }
-        
+
         // Store original data for filtering (только если еще не сохранено для mesh.isPoints)
         if (!mesh.isPoints) {
             const posAttr = pointCloud ? pointCloud.geometry.attributes.position : null;
             originalPointCount = posAttr ? posAttr.count : 0;
-            
+
             if (posAttr && posAttr.array) {
                 // Store positions as-is (Three.js will handle transformations)
                 originalPositions = posAttr.array.slice();
@@ -560,18 +583,18 @@ async function loadGLB(file) {
             } else {
                 originalPositions = null;
             }
-            
+
             if (pointCloud && pointCloud.geometry.attributes.color) {
                 originalColors = pointCloud.geometry.attributes.color.array.slice();
             } else {
                 originalColors = null;
             }
-            
+
             // Update params
             params.maxPoints = originalPointCount;
             params.pointPercent = 100;
         }
-        
+
         // Apply animation if needed (для всех случаев)
         applyAnimation(params.animation);
         currentAnimation = params.animation;
@@ -587,21 +610,21 @@ function loadPLY(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
         const text = e.target.result;
-        
+
         // Check if file is actually a PLY file
         if (!text.trim().startsWith('ply')) {
             alert('Invalid PLY file format. File does not appear to be a PLY file.\n\nPlease make sure you are loading a valid .ply or .sog file.');
             console.error('Invalid PLY header. Expected "ply", got:', text.substring(0, 20));
             return;
         }
-        
+
         parsePLY(text);
     };
-    
+
     reader.onerror = () => {
         alert('Error reading file');
     };
-    
+
     reader.readAsText(file);
 }
 
@@ -612,7 +635,7 @@ function parsePLY(text) {
     let vertexCount = 0;
     let hasColors = false;
     let properties = [];
-    
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (line.startsWith('element vertex')) {
@@ -626,49 +649,49 @@ function parsePLY(text) {
             break;
         }
     }
-    
+
     if (headerEnd === -1 || vertexCount === 0) {
         alert('Error parsing PLY file');
         return;
     }
-    
+
     const positions = new Float32Array(vertexCount * 3);
     const colors = hasColors ? new Uint8Array(vertexCount * 3) : null;
-    
+
     let xIdx = properties.indexOf('x');
     let yIdx = properties.indexOf('y');
     let zIdx = properties.indexOf('z');
     let rIdx = hasColors ? properties.indexOf('red') : -1;
     let gIdx = hasColors ? properties.indexOf('green') : -1;
     let bIdx = hasColors ? properties.indexOf('blue') : -1;
-    
+
     // For SOG files
     if (rIdx === -1 && properties.includes('f_dc_0')) {
         rIdx = properties.indexOf('f_dc_0');
         gIdx = properties.indexOf('f_dc_1');
         bIdx = properties.indexOf('f_dc_2');
     }
-    
+
     let dataStart = headerEnd + 1;
     let vertexIdx = 0;
-    
+
     for (let i = dataStart; i < lines.length && vertexIdx < vertexCount; i++) {
         const line = lines[i].trim();
         if (!line) continue;
-        
+
         const values = line.split(/\s+/).map(v => parseFloat(v));
-        
+
         if (xIdx >= 0 && yIdx >= 0 && zIdx >= 0) {
             positions[vertexIdx * 3] = values[xIdx];
             positions[vertexIdx * 3 + 1] = values[yIdx];
             positions[vertexIdx * 3 + 2] = values[zIdx];
         }
-        
+
         if (colors && rIdx >= 0 && gIdx >= 0 && bIdx >= 0) {
             let r = values[rIdx];
             let g = values[gIdx];
             let b = values[bIdx];
-            
+
             // Convert Spherical Harmonics for SOG
             if (properties.includes('f_dc_0')) {
                 const SH_C0 = 0.28209479177387814;
@@ -676,18 +699,18 @@ function parsePLY(text) {
                 g = Math.max(0, Math.min(255, (0.5 + SH_C0 * g) * 255));
                 b = Math.max(0, Math.min(255, (0.5 + SH_C0 * b) * 255));
             }
-            
+
             colors[vertexIdx * 3] = r;
             colors[vertexIdx * 3 + 1] = g;
             colors[vertexIdx * 3 + 2] = b;
         }
-        
+
         vertexIdx++;
     }
-    
+
     const positionAttr = new THREE.BufferAttribute(positions, 3);
     const colorAttr = colors ? new THREE.BufferAttribute(colors, 3, true) : null;
-    
+
     createPointCloud(positionAttr, colorAttr);
     updateInfo(vertexCount);
     dropzone.classList.add('hidden');
@@ -699,20 +722,20 @@ function parsePLY(text) {
 // Filter points uniformly across volume using voxel grid
 function filterPointsUniformly(targetCount) {
     if (!originalPositions || !pointCloud) return;
-    
+
     if (targetCount >= originalPointCount) {
         // No filtering needed, restore all points
         restoreAllPoints();
         return;
     }
-    
+
     const positions = new Float32Array(originalPointCount * 3);
     for (let i = 0; i < originalPointCount; i++) {
         positions[i * 3] = originalPositions[i * 3];
         positions[i * 3 + 1] = originalPositions[i * 3 + 1];
         positions[i * 3 + 2] = originalPositions[i * 3 + 2];
     }
-    
+
     // Calculate bounding box
     let minX = Infinity, minY = Infinity, minZ = Infinity;
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
@@ -727,50 +750,50 @@ function filterPointsUniformly(targetCount) {
         maxY = Math.max(maxY, y);
         maxZ = Math.max(maxZ, z);
     }
-    
+
     const sizeX = maxX - minX;
     const sizeY = maxY - minY;
     const sizeZ = maxZ - minZ;
-    
+
     // Calculate voxel size based on target count
     // We want approximately targetCount voxels
     const volume = sizeX * sizeY * sizeZ;
     const voxelVolume = volume / targetCount;
     const voxelSize = Math.cbrt(voxelVolume);
-    
+
     // Create voxel grid
     const gridSizeX = Math.ceil(sizeX / voxelSize) + 1;
     const gridSizeY = Math.ceil(sizeY / voxelSize) + 1;
     const gridSizeZ = Math.ceil(sizeZ / voxelSize) + 1;
-    
+
     // Map points to voxels
     const voxelMap = new Map();
     for (let i = 0; i < originalPointCount; i++) {
         const x = positions[i * 3];
         const y = positions[i * 3 + 1];
         const z = positions[i * 3 + 2];
-        
+
         const voxelX = Math.floor((x - minX) / voxelSize);
         const voxelY = Math.floor((y - minY) / voxelSize);
         const voxelZ = Math.floor((z - minZ) / voxelSize);
-        
+
         const key = `${voxelX},${voxelY},${voxelZ}`;
         if (!voxelMap.has(key)) {
             voxelMap.set(key, []);
         }
         voxelMap.get(key).push(i);
     }
-    
+
     // Select one point per voxel (or more if needed)
     const selectedIndices = new Set();
     const voxelKeys = Array.from(voxelMap.keys());
-    
+
     // Shuffle for randomness
     for (let i = voxelKeys.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [voxelKeys[i], voxelKeys[j]] = [voxelKeys[j], voxelKeys[i]];
     }
-    
+
     // Select points from voxels
     for (const key of voxelKeys) {
         const indices = voxelMap.get(key);
@@ -780,7 +803,7 @@ function filterPointsUniformly(targetCount) {
             if (selectedIndices.size >= targetCount) break;
         }
     }
-    
+
     // If we need more points, add randomly from remaining voxels
     if (selectedIndices.size < targetCount) {
         const remainingIndices = [];
@@ -799,30 +822,30 @@ function filterPointsUniformly(targetCount) {
             selectedIndices.add(remainingIndices[i]);
         }
     }
-    
+
     // Create filtered arrays
     const filteredIndices = Array.from(selectedIndices).sort((a, b) => a - b);
     const filteredCount = filteredIndices.length;
-    
+
     const filteredPositions = new Float32Array(filteredCount * 3);
     let filteredColors = null;
     if (originalColors) {
         filteredColors = new Float32Array(filteredCount * 3);
     }
-    
+
     for (let i = 0; i < filteredCount; i++) {
         const origIdx = filteredIndices[i];
         filteredPositions[i * 3] = originalPositions[origIdx * 3];
         filteredPositions[i * 3 + 1] = originalPositions[origIdx * 3 + 1];
         filteredPositions[i * 3 + 2] = originalPositions[origIdx * 3 + 2];
-        
+
         if (filteredColors) {
             filteredColors[i * 3] = originalColors[origIdx * 3];
             filteredColors[i * 3 + 1] = originalColors[origIdx * 3 + 1];
             filteredColors[i * 3 + 2] = originalColors[origIdx * 3 + 2];
         }
     }
-    
+
     // Update geometry
     const geometry = pointCloud.geometry;
     geometry.setAttribute('position', new THREE.BufferAttribute(filteredPositions, 3));
@@ -833,7 +856,7 @@ function filterPointsUniformly(targetCount) {
     if (geometry.attributes.color) {
         geometry.attributes.color.needsUpdate = true;
     }
-    
+
     // Reapply animation to update shader if needed
     if (currentMaterial && currentMaterial.uniforms) {
         applyAnimation(currentAnimation);
@@ -843,21 +866,21 @@ function filterPointsUniformly(targetCount) {
 // Restore all original points
 function restoreAllPoints() {
     if (!originalPositions || !pointCloud) return;
-    
+
     const geometry = pointCloud.geometry;
     const restoredPositions = new Float32Array(originalPositions);
     geometry.setAttribute('position', new THREE.BufferAttribute(restoredPositions, 3));
-    
+
     if (originalColors) {
         const restoredColors = new Float32Array(originalColors);
         geometry.setAttribute('color', new THREE.BufferAttribute(restoredColors, 3, true));
     }
-    
+
     geometry.attributes.position.needsUpdate = true;
     if (geometry.attributes.color) {
         geometry.attributes.color.needsUpdate = true;
     }
-    
+
     // Reapply animation to update shader if needed
     if (currentMaterial && currentMaterial.uniforms) {
         applyAnimation(currentAnimation);
@@ -878,22 +901,22 @@ function createPointCloud(positionAttr, colorAttr) {
             normalized: colorAttr.normalized
         } : null
     });
-    
+
     // Remove old point cloud
     if (pointCloud) {
         scene.remove(pointCloud);
         if (pointCloud.geometry) pointCloud.geometry.dispose();
         if (pointCloud.material) pointCloud.material.dispose();
     }
-    
+
     if (!positionAttr) {
         console.error('No position attribute provided!');
         alert('Cannot create point cloud: no position data');
         return;
     }
-    
+
     const geometry = new THREE.BufferGeometry();
-    
+
     // CRITICAL: Use .clone() for position attribute to preserve quantization metadata
     // This is essential for meshopt files with KHR_mesh_quantization
     // .clone() preserves scale/offset parameters needed for proper coordinate unpacking
@@ -911,25 +934,25 @@ function createPointCloud(positionAttr, colorAttr) {
         positionAttribute = positionAttr;
         console.warn('Position attribute is not a BufferAttribute, using as-is');
     }
-    
+
     geometry.setAttribute('position', positionAttribute);
     console.log('Geometry created with position attribute, count:', positionAttribute.count);
-    
+
     // Check if coordinates look quantized (large integers) and need dequantization
     const posArray = positionAttribute.array;
     if (posArray && posArray.length > 0) {
         const firstVal = Math.abs(posArray[0]);
         const isLikelyQuantized = firstVal > 1000 && firstVal < 32768 && Number.isInteger(firstVal);
-        
+
         if (isLikelyQuantized) {
             console.warn('Coordinates appear to be quantized (integers in range 1000-32768)');
             console.warn('First 9 values:', Array.from(posArray.slice(0, 9)));
             console.warn('Three.js should have dequantized these automatically. Checking if dequantization is needed...');
-            
+
             // Check if values are in reasonable float range after Three.js processing
             const sampleValues = Array.from(posArray.slice(0, 30));
             const avgAbs = sampleValues.reduce((sum, v) => sum + Math.abs(v), 0) / sampleValues.length;
-            
+
             if (avgAbs > 100 && avgAbs < 10000) {
                 console.warn('Values are in suspicious range - may need manual dequantization');
                 console.warn('Average absolute value:', avgAbs);
@@ -938,7 +961,7 @@ function createPointCloud(positionAttr, colorAttr) {
             }
         }
     }
-    
+
     // Handle color attribute - it might already be a BufferAttribute from GLB
     if (colorAttr) {
         // If it's already a BufferAttribute, clone it properly
@@ -946,7 +969,7 @@ function createPointCloud(positionAttr, colorAttr) {
             // Convert RGBA to RGB if needed (Three.js PointsMaterial expects RGB)
             let colorArray;
             let itemSize = colorAttr.itemSize;
-            
+
             if (itemSize === 4) {
                 // Convert RGBA to RGB
                 const rgbaArray = colorAttr.array;
@@ -964,7 +987,7 @@ function createPointCloud(positionAttr, colorAttr) {
                 // Clone the array as-is
                 colorArray = colorAttr.array.slice();
             }
-            
+
             const colorBuffer = new THREE.BufferAttribute(
                 colorArray,
                 itemSize,
@@ -990,14 +1013,14 @@ function createPointCloud(positionAttr, colorAttr) {
             const offset = colorAttr.offset;
             const count = colorAttr.count;
             const colorArray = new Float32Array(count * 3);
-            
+
             for (let i = 0; i < count; i++) {
                 const index = i * stride + offset;
                 colorArray[i * 3] = interleavedBuffer.array[index];
                 colorArray[i * 3 + 1] = interleavedBuffer.array[index + 1];
                 colorArray[i * 3 + 2] = interleavedBuffer.array[index + 2];
             }
-            
+
             const colorBuffer = new THREE.BufferAttribute(colorArray, 3, false);
             geometry.setAttribute('color', colorBuffer);
             console.log('Extracted interleaved color attribute:', {
@@ -1009,7 +1032,7 @@ function createPointCloud(positionAttr, colorAttr) {
             geometry.setAttribute('color', new THREE.BufferAttribute(colorAttr, 3, true));
         }
     }
-    
+
     const hasColors = geometry.attributes.color !== undefined;
     const material = new THREE.PointsMaterial({
         size: params.pointSize,
@@ -1018,12 +1041,12 @@ function createPointCloud(positionAttr, colorAttr) {
         opacity: params.opacity,
         sizeAttenuation: true // Important for proper point size scaling
     });
-    
+
     // Set default color if no vertex colors
     if (!hasColors) {
         material.color.set(0xffffff);
     }
-    
+
     // Final verification
     const finalColorAttr = geometry.attributes.color;
     console.log('Created point cloud:', {
@@ -1038,7 +1061,7 @@ function createPointCloud(positionAttr, colorAttr) {
             exists: true
         } : null
     });
-    
+
     // Force material to use vertex colors if they exist
     if (hasColors) {
         console.log('Forcing vertexColors to true for material');
@@ -1050,11 +1073,11 @@ function createPointCloud(positionAttr, colorAttr) {
     } else {
         material.color.set(0xffffff);
     }
-    
+
     pointCloud = new THREE.Points(geometry, material);
     scene.add(pointCloud);
     currentMaterial = material;
-    
+
     console.log('Point cloud added to scene:', {
         inScene: scene.children.includes(pointCloud),
         sceneChildrenCount: scene.children.length,
@@ -1062,7 +1085,7 @@ function createPointCloud(positionAttr, colorAttr) {
         materialSize: material.size,
         materialOpacity: material.opacity
     });
-    
+
     // Store original data for filtering
     originalPointCount = geometry.attributes.position.count;
     originalPositions = geometry.attributes.position.array.slice();
@@ -1071,11 +1094,11 @@ function createPointCloud(positionAttr, colorAttr) {
     } else {
         originalColors = null;
     }
-    
+
     // Update params
     params.maxPoints = originalPointCount;
     params.pointPercent = 100;
-    
+
     // Update GUI controls if they exist
     if (maxPointsCtrl) {
         maxPointsCtrl.min(0);
@@ -1085,17 +1108,17 @@ function createPointCloud(positionAttr, colorAttr) {
     if (pointPercentCtrl) {
         pointPercentCtrl.updateDisplay();
     }
-    
+
     // Update estimated file size
     updateEstimatedFileSize(originalPointCount);
-    
+
     // Setup camera
     geometry.computeBoundingBox();
     const box = geometry.boundingBox;
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-    
+
     console.log('Bounding box:', {
         min: { x: box.min.x, y: box.min.y, z: box.min.z },
         max: { x: box.max.x, y: box.max.y, z: box.max.z },
@@ -1103,25 +1126,25 @@ function createPointCloud(positionAttr, colorAttr) {
         size: { x: size.x, y: size.y, z: size.z },
         maxDim: maxDim
     });
-    
+
     // Check if bounding box is valid (not all zeros or invalid)
     const isValidBoundingBox = !isNaN(maxDim) && isFinite(maxDim) && maxDim > 0 && maxDim < 1e6;
-    
+
     if (!isValidBoundingBox) {
         console.error('Invalid bounding box detected! Coordinates may not be properly unpacked.');
         console.error('First 9 position values:', Array.from(geometry.attributes.position.array.slice(0, 9)));
         console.error('Position array type:', geometry.attributes.position.array.constructor.name);
-        
+
         // Try to manually compute bounding box from raw values
         const posArray = geometry.attributes.position.array;
         let minX = Infinity, minY = Infinity, minZ = Infinity;
         let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-        
+
         for (let i = 0; i < posArray.length; i += 3) {
             const x = posArray[i];
             const y = posArray[i + 1];
             const z = posArray[i + 2];
-            
+
             if (isFinite(x) && isFinite(y) && isFinite(z)) {
                 minX = Math.min(minX, x);
                 minY = Math.min(minY, y);
@@ -1131,29 +1154,29 @@ function createPointCloud(positionAttr, colorAttr) {
                 maxZ = Math.max(maxZ, z);
             }
         }
-        
+
         console.log('Manually computed bounds:', {
             min: { x: minX, y: minY, z: minZ },
             max: { x: maxX, y: maxY, z: maxZ }
         });
-        
+
         // Update bounding box manually
         box.min.set(minX, minY, minZ);
         box.max.set(maxX, maxY, maxZ);
         const newCenter = box.getCenter(new THREE.Vector3());
         const newSize = box.getSize(new THREE.Vector3());
         const newMaxDim = Math.max(newSize.x, newSize.y, newSize.z);
-        
+
         center.copy(newCenter);
         maxDim = newMaxDim;
-        
+
         console.log('Updated bounding box:', {
             center: { x: center.x, y: center.y, z: center.z },
             size: { x: newSize.x, y: newSize.y, z: newSize.z },
             maxDim: maxDim
         });
     }
-    
+
     // Adjust point size if bounding box is very large or very small
     if (maxDim > 1000) {
         console.warn('Very large bounding box detected, increasing point size');
@@ -1162,21 +1185,21 @@ function createPointCloud(positionAttr, colorAttr) {
         console.warn('Very small bounding box detected, decreasing point size');
         material.size = Math.min(material.size, maxDim * 10);
     }
-    
+
     const fov = camera.fov * (Math.PI / 180);
     let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
     cameraZ *= 1.5;
-    
+
     // Ensure camera is at reasonable distance
     if (!isFinite(cameraZ) || cameraZ <= 0 || cameraZ > 1e6) {
         console.warn('Invalid camera distance, using fallback');
         cameraZ = maxDim > 0 ? maxDim * 2 : 10;
     }
-    
+
     camera.position.set(center.x, center.y, center.z + cameraZ);
     controls.target.copy(center);
     controls.update();
-    
+
     console.log('Camera setup:', {
         position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
         target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
@@ -1184,19 +1207,19 @@ function createPointCloud(positionAttr, colorAttr) {
         pointSize: material.size,
         isValidBoundingBox: isValidBoundingBox
     });
-    
+
     // Apply restored parameters after pointCloud is created
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.toString().length > 0) {
         applyRestoredParams();
     }
-    
+
     // Don't auto-enable animations on load - user must enable manually via GUI
     // Animation will be applied based on params.animation (default: 'none')
-    
+
     applyAnimation(params.animation);
     currentAnimation = params.animation;
-    
+
     // After applying animation, restore colorMode settings
     // This ensures custom color mode is preserved when switching scenes
     if (currentMaterial) {
@@ -1213,9 +1236,9 @@ function createPointCloud(positionAttr, colorAttr) {
         } else if (params.colorMode === 'file' && hasColors) {
             if (!params.useShaderMaterial && currentMaterial.isPointsMaterial) {
                 // For PointsMaterial
-        currentMaterial.vertexColors = true;
-            currentMaterial.color.set(0xffffff);
-        currentMaterial.needsUpdate = true;
+                currentMaterial.vertexColors = true;
+                currentMaterial.color.set(0xffffff);
+                currentMaterial.needsUpdate = true;
             }
             // For ShaderMaterial, vertexColors is already set correctly in applyAnimation
         }
@@ -1229,33 +1252,33 @@ function initGUI() {
     if (gui) {
         gui.destroy();
     }
-    
+
     // Create new GUI
     gui = new GUI({ autoPlace: true });
     gui.domElement.style.position = 'fixed';
     gui.domElement.style.top = '20px';
     gui.domElement.style.right = '20px';
     gui.domElement.style.zIndex = '50';
-    
+
     // Scene folder - FIRST section
     sceneFolder = gui.addFolder('Scene');
-    
+
     // Scene selector dropdown (will be updated when models are loaded)
     // Initialize with empty array, will be updated after models are loaded
     params.selectedScene = defaultScenes.length > 0 ? defaultScenes[0] : '';
     selectedSceneCtrl = sceneFolder.add(params, 'selectedScene', defaultScenes).name('Default Scene');
     selectedSceneCtrl.onChange((value) => {
         if (!value) return;
-        
+
         // If value is a custom file (not in defaultScenes), don't load from default_scenes
         if (!defaultScenes.includes(value)) {
             // This is a custom file, already loaded, just return
             return;
         }
-        
+
         // Clear custom file name when selecting default scene
         currentCustomFileName = null;
-        
+
         // Remove old point cloud immediately before loading new one
         if (pointCloud) {
             console.log('🟡 [DEBUG] Removing old point cloud before loading new model...');
@@ -1265,23 +1288,23 @@ function initGUI() {
             pointCloud = null;
             currentMaterial = null;
         }
-        
+
         // Update URL parameter
         updateURLParameter('model', value);
         // Load the file
         const url = `default_scenes/${value}`;
         loadFileFromURL(url, value);
     });
-    
+
     // Load custom file button
     sceneFolder.add(params, 'loadCustomFile').name('Load Custom File');
-    
+
     // Share button
     sceneFolder.add(params, 'shareCurrentView').name('Share');
-    
+
     // Drag & Drop area in panel (we'll add this via HTML/CSS)
     sceneFolder.open();
-    
+
     // Information folder
     infoFolder = gui.addFolder('Information');
     const pointsCtrl = infoFolder.add(params, 'points').name('Points').listen();
@@ -1291,7 +1314,7 @@ function initGUI() {
     const sizeCtrl = infoFolder.add(params, 'fileSize').name('Size').listen();
     const sizeInput = sizeCtrl.domElement.querySelector('input') || sizeCtrl.domElement.querySelector('.lil-gui input');
     if (sizeInput) sizeInput.disabled = true;
-    
+
     // Point filtering controls
     pointPercentCtrl = infoFolder.add(params, 'pointPercent', 0, 100, 1).name('Point Percent (%)');
     pointPercentCtrl.onChange((value) => {
@@ -1305,7 +1328,7 @@ function initGUI() {
             updateEstimatedFileSize(targetCount);
         }
     });
-    
+
     maxPointsCtrl = infoFolder.add(params, 'maxPoints', 0, originalPointCount || 1, 1).name('Max Points');
     maxPointsCtrl.onChange((value) => {
         if (originalPointCount > 0) {
@@ -1319,25 +1342,25 @@ function initGUI() {
             updateEstimatedFileSize(value);
         }
     });
-    
+
     // Estimated file size (read-only)
     estimatedFileSizeCtrl = infoFolder.add(params, 'estimatedFileSize').name('Estimated Size').listen();
     const estimatedSizeInput = estimatedFileSizeCtrl.domElement.querySelector('input') || estimatedFileSizeCtrl.domElement.querySelector('.lil-gui input');
     if (estimatedSizeInput) estimatedSizeInput.disabled = true;
-    
+
     // Initialize estimated file size
     if (originalPointCount > 0) {
         updateEstimatedFileSize(params.maxPoints || originalPointCount);
     }
-    
+
     infoFolder.open();
-    
+
     // Display folder
     displayFolder = gui.addFolder('Display');
-    
+
     // Use Shader Material - first in Display folder
     const useShaderCtrl = displayFolder.add(params, 'useShaderMaterial').name('Use Shader Material');
-    
+
     // Point Size and Opacity controls (work for both PointsMaterial and ShaderMaterial)
     const pointSizeCtrl = displayFolder.add(params, 'pointSize', 0.01, 0.2, 0.01).name('Point Size');
     pointSizeCtrl.onChange((value) => {
@@ -1349,7 +1372,7 @@ function initGUI() {
             currentMaterial.uniforms.uPointSize.value = value * 100.0;
         }
     });
-    
+
     const opacityCtrl = displayFolder.add(params, 'opacity', 0, 1, 0.05).name('Opacity');
     opacityCtrl.onChange((value) => {
         if (currentMaterial && !params.useShaderMaterial) {
@@ -1362,7 +1385,7 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     // Color Mode and Custom Color controls
     const colorModeCtrl = displayFolder.add(params, 'colorMode', ['file', 'custom']).name('Color Mode');
     colorModeCtrl.onChange((value) => {
@@ -1370,10 +1393,10 @@ function initGUI() {
             console.warn('Cannot change color mode: pointCloud is null');
             return;
         }
-        
+
         const hasColors = pointCloud.geometry.attributes.color !== undefined;
         console.log('Color mode changed to:', value, 'hasColors:', hasColors);
-        
+
         // If using shader material, recreate it to apply color mode changes
         if (params.useShaderMaterial) {
             applyAnimation(currentAnimation);
@@ -1383,7 +1406,7 @@ function initGUI() {
                 console.warn('Cannot change color mode: material is null');
                 return;
             }
-            
+
             if (value === 'file') {
                 if (hasColors) {
                     currentMaterial.vertexColors = true;
@@ -1402,11 +1425,11 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     const customColorCtrl = displayFolder.addColor(params, 'customColor').name('Custom Color');
     customColorCtrl.onChange((value) => {
         if (!pointCloud) return;
-        
+
         // If using shader material, update uniform or recreate material
         if (params.useShaderMaterial) {
             if (params.colorMode === 'custom') {
@@ -1428,23 +1451,23 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     // Background color control
     const backgroundColorCtrl = displayFolder.addColor(params, 'backgroundColor').name('Background Color');
     backgroundColorCtrl.onChange((value) => {
         renderer.setClearColor(value);
         serializeParamsToURL();
     });
-    
+
     // Update controls state based on useShaderMaterial
     const updateControlsState = () => {
         const isShaderEnabled = params.useShaderMaterial;
-        
+
         // Point size and opacity controls work for both materials now
         // Don't disable them anymore
-            pointSizeCtrl.enable();
-            opacityCtrl.enable();
-        
+        pointSizeCtrl.enable();
+        opacityCtrl.enable();
+
         // Color mode and custom color are always active when shader material is enabled
         if (isShaderEnabled) {
             colorModeCtrl.enable();
@@ -1454,10 +1477,10 @@ function initGUI() {
             customColorCtrl.enable();
         }
     };
-    
+
     // Initial state update
     updateControlsState();
-    
+
     // Update state when useShaderMaterial changes
     useShaderCtrl.onChange((value) => {
         updateControlsState();
@@ -1467,10 +1490,10 @@ function initGUI() {
         serializeParamsToURL();
     });
     displayFolder.open();
-    
+
     // Animation folder - Spherical Waves
     const animFolder = gui.addFolder('Animation');
-    
+
     // Enable/disable waves checkbox
     const wavesEnabledCtrl = animFolder.add(params, 'wavesEnabled').name('Enable Waves');
     wavesEnabledCtrl.onChange((value) => {
@@ -1488,7 +1511,7 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     // Wave amplitude control (1-10) - controls wave width
     const wavesAmplitudeCtrl = animFolder.add(params, 'wavesAmplitude', 1, 10, 0.1).name('Wave Width');
     wavesAmplitudeCtrl.onChange((value) => {
@@ -1497,7 +1520,7 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     // Wave period control (1-10) - number of simultaneous waves
     const wavesPeriodCtrl = animFolder.add(params, 'wavesPeriod', 1, 10, 0.1).name('Wave Count');
     wavesPeriodCtrl.onChange((value) => {
@@ -1506,7 +1529,7 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     // Wave speed control (units per second) - propagation speed
     const wavesSpeedCtrl = animFolder.add(params, 'wavesSpeed', 0.1, 50, 0.1).name('Wave Speed (units/s)');
     wavesSpeedCtrl.onChange((value) => {
@@ -1515,7 +1538,7 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     // Wave color control
     const wavesColorCtrl = animFolder.addColor(params, 'wavesColor').name('Wave Color');
     wavesColorCtrl.onChange((value) => {
@@ -1525,7 +1548,7 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     // Wave color intensity control (0-10)
     const wavesColorIntensityCtrl = animFolder.add(params, 'wavesColorIntensity', 0, 10, 0.1).name('Color Intensity');
     wavesColorIntensityCtrl.onChange((value) => {
@@ -1534,7 +1557,7 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     // Displacement axis control
     const wavesDisplacementAxisCtrl = animFolder.add(params, 'wavesDisplacementAxis', ['x', 'y', 'z']).name('Displacement Axis');
     wavesDisplacementAxisCtrl.onChange((value) => {
@@ -1544,7 +1567,7 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     // Displacement amount control (0-10)
     const wavesDisplacementCtrl = animFolder.add(params, 'wavesDisplacement', 0, 10, 0.1).name('Displacement');
     wavesDisplacementCtrl.onChange((value) => {
@@ -1553,9 +1576,192 @@ function initGUI() {
         }
         serializeParamsToURL();
     });
-    
+
     animFolder.open();
-    
+
+    // ==================== Keyframes Folder ====================
+
+    const keyframesFolder = gui.addFolder('Keyframes 🎬');
+
+    // Capture button
+    keyframesFolder.add({
+        captureKeyframe: () => {
+            if (!keyframeManager) {
+                initKeyframeSystem();
+            }
+            try {
+                const kf = keyframeManager.captureKeyframe();
+                showNotification(`Captured: ${kf.name}`, 'success');
+                refreshKeyframesList();
+            } catch (e) {
+                showNotification(e.message, 'error');
+            }
+        }
+    }, 'captureKeyframe').name('📸 Capture Current State');
+
+    // Dynamic keyframe list
+    let keyframeListItems = [];
+    let timelineCtrl = null; // Will be initialized after playback controls are created
+
+    function refreshKeyframesList() {
+        // Remove old items
+        keyframeListItems.forEach(item => {
+            if (item.destroy) item.destroy();
+        });
+        keyframeListItems = [];
+
+        // Add current keyframes
+        if (keyframeManager) {
+            console.log('🔄 Refreshing keyframes list, count:', keyframeManager.keyframes.length);
+            keyframeManager.keyframes.forEach((kf, index) => {
+                const folder = keyframesFolder.addFolder(`${index + 1}. ${kf.name}`);
+
+                // Apply button
+                folder.add({
+                    apply: () => {
+                        applyViewerState(kf.state, { source: 'manual' });
+                        showNotification(`Applied: ${kf.name}`, 'info');
+                    }
+                }, 'apply').name('▶ Apply');
+
+                // Duration slider
+                folder.add(kf, 'durationToNextSec', 0, 10, 0.1).name('Duration (sec)')
+                    .onChange(() => {
+                        keyframeManager.saveToLocalStorage();
+                        if (timelineCtrl && keyframeAnimator) {
+                            timelineCtrl.max(keyframeAnimator.getTotalDuration());
+                        }
+                    });
+
+                // Delete button
+                folder.add({
+                    delete: () => {
+                        keyframeManager.deleteKeyframe(kf.id);
+                        showNotification(`Deleted: ${kf.name}`, 'info');
+                        refreshKeyframesList();
+                    }
+                }, 'delete').name('🗑 Delete');
+
+                keyframeListItems.push(folder);
+            });
+
+            // Update timeline max after refreshing list
+            if (timelineCtrl && keyframeAnimator) {
+                const totalDuration = keyframeAnimator.getTotalDuration();
+                if (totalDuration > 0) {
+                    timelineCtrl.max(totalDuration);
+                }
+            }
+        }
+    }
+
+    // Playback controls
+    const playbackParams = {
+        playPause: () => {
+            console.log('▶ playPause clicked, animator:', !!keyframeAnimator);
+            if (!keyframeAnimator) {
+                showNotification('Initialize keyframes first', 'error');
+                return;
+            }
+            console.log('▶ isPlaying:', keyframeAnimator.isPlaying, 'keyframes:', keyframeAnimator.manager.keyframes.length);
+            if (keyframeAnimator.isPlaying) {
+                keyframeAnimator.pause();
+            } else {
+                // Update timeline max before playing
+                const totalDuration = keyframeAnimator.getTotalDuration();
+                console.log('▶ Total duration:', totalDuration);
+                if (timelineCtrl && totalDuration > 0) {
+                    timelineCtrl.max(totalDuration);
+                }
+                keyframeAnimator.play();
+            }
+        },
+        stop: () => {
+            if (keyframeAnimator) {
+                keyframeAnimator.stop();
+                if (timelineCtrl) {
+                    playbackParams.currentTime = 0;
+                    timelineCtrl.updateDisplay();
+                }
+            }
+        },
+        loop: false,
+        currentTime: 0
+    };
+
+    keyframesFolder.add(playbackParams, 'playPause').name('▶ Play / ⏸ Pause');
+    keyframesFolder.add(playbackParams, 'stop').name('⏹ Stop');
+    keyframesFolder.add(playbackParams, 'loop').name('🔁 Loop').onChange(val => {
+        if (keyframeAnimator) {
+            keyframeAnimator.setLoop(val);
+        }
+    });
+
+    // Timeline scrubber (will be updated with correct max after keyframes are loaded)
+    timelineCtrl = keyframesFolder.add(playbackParams, 'currentTime', 0, 10, 0.01).name('Timeline')
+        .onChange(t => {
+            if (keyframeAnimator && !keyframeAnimator.isPlaying) {
+                keyframeAnimator.setTime(t);
+            }
+        });
+
+    // Update timeline display during playback
+    setInterval(() => {
+        if (keyframeAnimator && keyframeAnimator.isPlaying) {
+            playbackParams.currentTime = keyframeAnimator.getCurrentTime();
+            timelineCtrl.updateDisplay();
+        }
+    }, 50); // Update 20 times per second
+
+    // Export/Import
+    keyframesFolder.add({
+        export: () => {
+            if (!keyframeManager || keyframeManager.keyframes.length === 0) {
+                showNotification('No keyframes to export', 'error');
+                return;
+            }
+            const json = keyframeManager.exportToJSON();
+            copyToClipboard(json);
+            showNotification('Keyframes copied to clipboard', 'success');
+        }
+    }, 'export').name('📤 Export JSON');
+
+    keyframesFolder.add({
+        import: () => {
+            const json = prompt('Paste keyframes JSON:');
+            if (json) {
+                try {
+                    if (!keyframeManager) {
+                        initKeyframeSystem();
+                    }
+                    keyframeManager.importFromJSON(json);
+                    refreshKeyframesList();
+                    showNotification('Keyframes imported', 'success');
+                } catch (e) {
+                    showNotification('Invalid JSON: ' + e.message, 'error');
+                }
+            }
+        }
+    }, 'import').name('📥 Import JSON');
+
+    keyframesFolder.add({
+        clear: () => {
+            if (confirm('Delete all keyframes?')) {
+                if (keyframeManager) {
+                    keyframeManager.clearAll();
+                    refreshKeyframesList();
+                    showNotification('All keyframes cleared', 'info');
+                }
+            }
+        }
+    }, 'clear').name('🗑 Clear All');
+
+    // Initialize keyframe system after GUI is created
+    initKeyframeSystem();
+
+    // Load existing keyframes if any
+    refreshKeyframesList();
+
     // Add version info at the bottom of the panel
     const versionElement = document.createElement('div');
     versionElement.textContent = `Version ${APP_VERSION}`;
@@ -1568,22 +1774,22 @@ function initGUI() {
         margin-top: 8px;
     `;
     gui.domElement.appendChild(versionElement);
-    
+
 }
 
 // Apply animation
 function applyAnimation(type) {
     if (!pointCloud || !pointCloud.geometry) return;
-    
+
     if (type === 'none') {
         // Use shader material if explicitly enabled
         const useShader = params.useShaderMaterial;
-        
+
         if (useShader) {
             const geometry = pointCloud.geometry;
             const hasColors = geometry.attributes.color !== undefined;
             const useVertexColors = params.colorMode === 'file' && hasColors;
-            
+
             let vertexShader = getVertexShader('none', useVertexColors);
             const fragmentShader = useVertexColors ? `
                 precision highp float;
@@ -1608,7 +1814,7 @@ function applyAnimation(type) {
                     gl_FragColor = vec4(uColor, alpha);
                 }
             `;
-            
+
             const uniforms = {
                 uTime: { value: animationTime },
                 uDuration: { value: 2.0 },
@@ -1617,11 +1823,11 @@ function applyAnimation(type) {
                 uPointSize: { value: params.pointSize * 100.0 }, // Конвертируем 0.01-0.2 в 1-20 пикселей
                 uOpacity: { value: params.opacity } // Прозрачность
             };
-            
+
             if (!useVertexColors) {
                 uniforms.uColor = { value: new THREE.Color(params.customColor) };
             }
-            
+
             const material = new THREE.ShaderMaterial({
                 vertexShader,
                 fragmentShader,
@@ -1631,7 +1837,7 @@ function applyAnimation(type) {
                 lights: false, // Disable automatic lighting - we'll handle it manually
                 fog: false
             });
-            
+
             scene.remove(pointCloud);
             if (pointCloud.material) pointCloud.material.dispose();
             pointCloud.material = material;
@@ -1639,19 +1845,19 @@ function applyAnimation(type) {
             currentMaterial = material;
             return;
         }
-        
+
         // Return to regular PointsMaterial (if not using shader material)
         const geometry = pointCloud.geometry;
         const hasColors = geometry.attributes.color !== undefined;
         console.log('Applying none animation, hasColors:', hasColors, 'colorMode:', params.colorMode);
-        
+
         const material = new THREE.PointsMaterial({
             size: params.pointSize,
             vertexColors: false, // Will be set based on colorMode
             transparent: true,
             opacity: params.opacity
         });
-        
+
         // Set vertexColors based on colorMode
         if (params.colorMode === 'file' && hasColors) {
             material.vertexColors = true;
@@ -1668,15 +1874,15 @@ function applyAnimation(type) {
             material.color.set(0xffffff);
             console.log('Using default white color');
         }
-        
+
         material.needsUpdate = true;
-        
+
         scene.remove(pointCloud);
         if (pointCloud.material) pointCloud.material.dispose();
         pointCloud.material = material;
         scene.add(pointCloud);
         currentMaterial = material;
-        
+
         console.log('Material after none animation:', {
             vertexColors: material.vertexColors,
             hasColors: hasColors,
@@ -1685,22 +1891,22 @@ function applyAnimation(type) {
         });
         return;
     }
-    
+
     // Create shader material for animation
     const geometry = pointCloud.geometry;
     const hasColors = geometry.attributes.color !== undefined;
     // Use colors only if colorMode is 'file' and colors exist
     const useVertexColors = params.colorMode === 'file' && hasColors;
-    
+
     console.log('Creating shader material:', {
         type: type,
         hasColors: hasColors,
         colorMode: params.colorMode,
         useVertexColors: useVertexColors
     });
-    
+
     let vertexShader = getVertexShader(type, useVertexColors);
-    
+
     // Special fragment shader for spherical waves with color interpolation
     let fragmentShader;
     if (type === 'spherical_waves') {
@@ -1786,7 +1992,7 @@ function applyAnimation(type) {
         }
     `;
     }
-    
+
     const uniforms = {
         uTime: { value: 0 },
         uDuration: { value: 2.0 },
@@ -1795,8 +2001,8 @@ function applyAnimation(type) {
         uPointSize: { value: params.pointSize * 100.0 }, // Конвертируем 0.01-0.2 в 1-20 пикселей
         uOpacity: { value: params.opacity } // Прозрачность
     };
-    
-    
+
+
     // Add specific uniforms for different animations
     if (type === 'rain') {
         uniforms.uDropHeight = { value: 10.0 };
@@ -1821,7 +2027,7 @@ function applyAnimation(type) {
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
         const maxDistance = Math.max(size.x, size.y, size.z) * 0.5; // Maximum distance from center
-        
+
         uniforms.uCenter = { value: center };
         uniforms.uWavesAmplitude = { value: params.wavesAmplitude };
         uniforms.uWavePeriod = { value: params.wavesPeriod };
@@ -1835,8 +2041,8 @@ function applyAnimation(type) {
         uniforms.uDisplacementAxis = { value: params.wavesDisplacementAxis === 'x' ? 0 : (params.wavesDisplacementAxis === 'y' ? 1 : 2) }; // 0=x, 1=y, 2=z
         uniforms.uDisplacement = { value: params.wavesDisplacement };
     }
-    
-    
+
+
     const material = new THREE.ShaderMaterial({
         vertexShader,
         fragmentShader,
@@ -1846,21 +2052,21 @@ function applyAnimation(type) {
         lights: false, // Disable automatic lighting - we'll handle it manually
         fog: false
     });
-    
+
     // Check for shader compilation errors
     material.onBeforeCompile = (shader) => {
         console.log('Compiling shader');
     };
-    
+
     console.log('Shader material created with vertexColors:', useVertexColors);
-    
+
     // If using custom color, add it as uniform
     if (!useVertexColors) {
         const customColor = new THREE.Color(params.customColor);
         material.uniforms.uColor = { value: customColor };
         console.log('Added custom color uniform:', params.customColor);
     }
-    
+
     scene.remove(pointCloud);
     if (pointCloud.material) pointCloud.material.dispose();
     pointCloud.material = material;
@@ -1976,9 +2182,9 @@ function getVertexShader(type, hasColors = true) {
             return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
         }
     `;
-    
+
     let animationCode = '';
-    
+
     if (type === 'none') {
         animationCode = `
             uniform float uPointSize;
@@ -2224,7 +2430,7 @@ function getVertexShader(type, hasColors = true) {
             }
         `;
     }
-    
+
     return common + animationCode;
 }
 
@@ -2232,7 +2438,7 @@ function getVertexShader(type, hasColors = true) {
 
 function updateInfo(pointCount) {
     params.points = pointCount.toLocaleString('en-US');
-    
+
     let sizeStr = '';
     if (fileSize < 1024) {
         sizeStr = fileSize + ' B';
@@ -2251,11 +2457,11 @@ function updateEstimatedFileSize(pointCount) {
         if (estimatedFileSizeCtrl) estimatedFileSizeCtrl.updateDisplay();
         return;
     }
-    
+
     // Calculate size per point ratio from original file
     const sizePerPoint = fileSize / originalPointCount;
     const estimatedSize = sizePerPoint * pointCount;
-    
+
     let sizeStr = '';
     if (estimatedSize < 1024) {
         sizeStr = Math.round(estimatedSize) + ' B';
@@ -2264,16 +2470,127 @@ function updateEstimatedFileSize(pointCount) {
     } else {
         sizeStr = (estimatedSize / (1024 * 1024)).toFixed(2) + ' MB';
     }
-    
+
     params.estimatedFileSize = sizeStr;
     if (estimatedFileSizeCtrl) estimatedFileSizeCtrl.updateDisplay();
+}
+
+// Apply a complete viewer state (used by keyframe animation)
+function applyViewerState(state, options = {}) {
+    if (!state) return;
+
+    console.log('🎬 Applying viewer state from:', options.source || 'unknown');
+
+    // Update params object with new state
+    params.pointPercent = state.pointPercent;
+    params.maxPoints = state.maxPoints;
+    params.pointSize = state.pointSize;
+    params.opacity = state.opacity;
+    params.colorMode = state.colorMode;
+    params.customColor = state.customColor;
+    params.backgroundColor = state.backgroundColor;
+    params.wavesEnabled = state.wavesEnabled;
+    params.wavesAmplitude = state.wavesAmplitude;
+    params.wavesPeriod = state.wavesPeriod;
+    params.wavesSpeed = state.wavesSpeed;
+    params.wavesColor = state.wavesColor;
+    params.wavesColorIntensity = state.wavesColorIntensity;
+    params.wavesDisplacementAxis = state.wavesDisplacementAxis;
+    params.wavesDisplacement = state.wavesDisplacement;
+
+    // Apply to renderer
+    if (currentMaterial) {
+        // Update point size
+        if (!params.useShaderMaterial) {
+            currentMaterial.size = state.pointSize;
+        } else if (currentMaterial.uniforms && currentMaterial.uniforms.uPointSize) {
+            currentMaterial.uniforms.uPointSize.value = state.pointSize * 100.0;
+        }
+
+        // Update opacity
+        if (!params.useShaderMaterial) {
+            currentMaterial.opacity = state.opacity;
+            currentMaterial.transparent = state.opacity < 1;
+        } else if (currentMaterial.uniforms && currentMaterial.uniforms.uOpacity) {
+            currentMaterial.uniforms.uOpacity.value = state.opacity;
+        }
+
+        // Update color mode
+        if (state.colorMode === 'custom') {
+            if (!params.useShaderMaterial) {
+                currentMaterial.vertexColors = false;
+                currentMaterial.color.set(state.customColor);
+            } else if (currentMaterial.uniforms && currentMaterial.uniforms.uColor) {
+                currentMaterial.uniforms.uColor.value.set(state.customColor);
+            }
+        }
+
+        // Update shader uniforms for waves if using shader material
+        if (params.useShaderMaterial && currentMaterial.uniforms) {
+            if (currentMaterial.uniforms.uWavesAmplitude) {
+                currentMaterial.uniforms.uWavesAmplitude.value = state.wavesAmplitude;
+            }
+            if (currentMaterial.uniforms.uWavePeriod) {
+                currentMaterial.uniforms.uWavePeriod.value = state.wavesPeriod;
+            }
+            if (currentMaterial.uniforms.uWavesSpeed) {
+                currentMaterial.uniforms.uWavesSpeed.value = state.wavesSpeed;
+            }
+            if (currentMaterial.uniforms.uWaveColor) {
+                currentMaterial.uniforms.uWaveColor.value.set(state.wavesColor);
+            }
+            if (currentMaterial.uniforms.uWaveColorIntensity) {
+                currentMaterial.uniforms.uWaveColorIntensity.value = state.wavesColorIntensity;
+            }
+            if (currentMaterial.uniforms.uDisplacementAxis) {
+                const axisValue = state.wavesDisplacementAxis === 'x' ? 0 : (state.wavesDisplacementAxis === 'y' ? 1 : 2);
+                currentMaterial.uniforms.uDisplacementAxis.value = axisValue;
+            }
+            if (currentMaterial.uniforms.uDisplacement) {
+                currentMaterial.uniforms.uDisplacement.value = state.wavesDisplacement;
+            }
+        }
+
+        currentMaterial.needsUpdate = true;
+    }
+
+    // Update background color
+    renderer.setClearColor(state.backgroundColor);
+
+    // Update camera position and target during animation for smooth camera movement
+    if (state.camera) {
+        camera.position.set(...state.camera.position);
+        controls.target.set(...state.camera.target);
+        camera.fov = state.camera.fov;
+        camera.updateProjectionMatrix();
+        controls.update();
+    }
+
+    // Update waves animation state
+    if (state.wavesEnabled && currentAnimation !== 'spherical_waves') {
+        params.animation = 'spherical_waves';
+        currentAnimation = 'spherical_waves';
+        applyAnimation(currentAnimation);
+    } else if (!state.wavesEnabled && currentAnimation === 'spherical_waves') {
+        params.animation = 'none';
+        currentAnimation = 'none';
+        applyAnimation(currentAnimation);
+    }
+
+    // Update GUI displays
+    if (gui) {
+        gui.updateDisplay();
+    }
+
+    // Store in global store
+    store.setViewerState(state, options);
 }
 
 // ==================== Animation Loop ====================
 
 function animate() {
     requestAnimationFrame(animate);
-    
+
     // Update point size and opacity uniforms for shader material
     if (pointCloud && pointCloud.material && pointCloud.material.uniforms) {
         if (pointCloud.material.uniforms.uPointSize) {
@@ -2283,7 +2600,7 @@ function animate() {
             pointCloud.material.uniforms.uOpacity.value = params.opacity;
         }
     }
-    
+
     if (currentAnimation !== 'none' && pointCloud && pointCloud.material && pointCloud.material.uniforms) {
         // Update animation time for spherical waves (continuous, no duration limit)
         if (currentAnimation === 'spherical_waves' && params.wavesEnabled) {
@@ -2315,36 +2632,36 @@ function animate() {
             }
         } else {
             // Only update animation time if playing (for other animations)
-        if (isAnimationPlaying || params.animRepeat) {
-            animationTime += 0.016 * params.animSpeed; // ~60fps
-            pointCloud.material.uniforms.uTime.value = animationTime;
-            pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
-            pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
-            
-            const duration = pointCloud.material.uniforms.uDuration.value * 2;
-            
-            // Check if animation completed
-            if (animationTime > duration) {
-                if (params.animRepeat) {
-                    // Auto-repeat: reset time
-                    animationTime = 0;
-                } else {
-                    // No repeat: stop at the end
-                    animationTime = duration;
-                    isAnimationPlaying = false;
+            if (isAnimationPlaying || params.animRepeat) {
+                animationTime += 0.016 * params.animSpeed; // ~60fps
+                pointCloud.material.uniforms.uTime.value = animationTime;
+                pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
+                pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
+
+                const duration = pointCloud.material.uniforms.uDuration.value * 2;
+
+                // Check if animation completed
+                if (animationTime > duration) {
+                    if (params.animRepeat) {
+                        // Auto-repeat: reset time
+                        animationTime = 0;
+                    } else {
+                        // No repeat: stop at the end
+                        animationTime = duration;
+                        isAnimationPlaying = false;
+                    }
                 }
-            }
-        } else {
-            // Animation is paused, but still update uniforms for current time
-            pointCloud.material.uniforms.uTime.value = animationTime;
-            pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
-            pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
+            } else {
+                // Animation is paused, but still update uniforms for current time
+                pointCloud.material.uniforms.uTime.value = animationTime;
+                pointCloud.material.uniforms.uSpeed.value = params.animSpeed;
+                pointCloud.material.uniforms.uAmplitude.value = params.animAmplitude;
             }
         }
     }
-    
+
     controls.update();
-    
+
     renderer.render(scene, camera);
 }
 
@@ -2356,20 +2673,20 @@ async function shortenURL(longURL) {
         const apiURL = `https://v.gd/create.php?format=json&url=${encodeURIComponent(longURL)}`;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-        
+
         const response = await fetch(apiURL, {
             method: 'GET',
             signal: controller.signal
         });
-        
+
         clearTimeout(timeoutId);
-        
+
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-        
+
         const data = await response.json();
-        
+
         // v.gd returns JSON with 'shorturl' field
         if (data.shorturl && data.shorturl.startsWith('http')) {
             return data.shorturl.trim();
@@ -2390,7 +2707,7 @@ async function copyToClipboard(text) {
             await navigator.clipboard.writeText(text);
             return true;
         }
-        
+
         // Fallback for older browsers
         const textArea = document.createElement('textarea');
         textArea.value = text;
@@ -2400,7 +2717,7 @@ async function copyToClipboard(text) {
         document.body.appendChild(textArea);
         textArea.focus();
         textArea.select();
-        
+
         try {
             const successful = document.execCommand('copy');
             document.body.removeChild(textArea);
@@ -2419,7 +2736,7 @@ async function copyToClipboard(text) {
 function showNotification(message, type = 'success') {
     // Create notification element
     const notification = document.createElement('div');
-    
+
     // Determine background color based on type
     let bgColor = '#4ecdc4'; // default success color
     if (type === 'error') {
@@ -2427,7 +2744,7 @@ function showNotification(message, type = 'success') {
     } else if (type === 'info') {
         bgColor = '#4a90e2';
     }
-    
+
     notification.style.cssText = `
         position: fixed;
         top: 20px;
@@ -2447,7 +2764,7 @@ function showNotification(message, type = 'success') {
         animation: slideDown 0.3s ease-out;
     `;
     notification.textContent = message;
-    
+
     // Add animation keyframes if not already added
     if (!document.getElementById('notification-styles')) {
         const style = document.createElement('style');
@@ -2466,9 +2783,9 @@ function showNotification(message, type = 'success') {
         `;
         document.head.appendChild(style);
     }
-    
+
     document.body.appendChild(notification);
-    
+
     // Remove notification after 3 seconds
     setTimeout(() => {
         notification.style.animation = 'slideDown 0.3s ease-out reverse';
@@ -2502,7 +2819,7 @@ function updateURLParameter(name, value) {
 // Serialize all parameters to URL
 function serializeParamsToURL() {
     const url = new URL(window.location);
-    
+
     // Clear existing params (except model)
     const modelParam = url.searchParams.get('model');
     url.searchParams.forEach((value, key) => {
@@ -2510,7 +2827,7 @@ function serializeParamsToURL() {
             url.searchParams.delete(key);
         }
     });
-    
+
     // Serialize display parameters
     url.searchParams.set('pointSize', params.pointSize.toString());
     url.searchParams.set('opacity', params.opacity.toString());
@@ -2518,12 +2835,12 @@ function serializeParamsToURL() {
     url.searchParams.set('customColor', params.customColor);
     url.searchParams.set('backgroundColor', params.backgroundColor);
     url.searchParams.set('useShaderMaterial', params.useShaderMaterial.toString());
-    
+
     // Serialize animation parameters
     url.searchParams.set('animation', params.animation);
     url.searchParams.set('animSpeed', params.animSpeed.toString());
     url.searchParams.set('animAmplitude', params.animAmplitude.toString());
-    
+
     // Serialize wave parameters
     url.searchParams.set('wavesEnabled', params.wavesEnabled.toString());
     url.searchParams.set('wavesAmplitude', params.wavesAmplitude.toString());
@@ -2533,20 +2850,20 @@ function serializeParamsToURL() {
     url.searchParams.set('wavesColorIntensity', params.wavesColorIntensity.toString());
     url.searchParams.set('wavesDisplacementAxis', params.wavesDisplacementAxis);
     url.searchParams.set('wavesDisplacement', params.wavesDisplacement.toString());
-    
+
     // Serialize camera viewport relative to model center
     // Calculate model center if pointCloud exists
     if (pointCloud && pointCloud.geometry) {
         pointCloud.geometry.computeBoundingBox();
         const box = pointCloud.geometry.boundingBox;
         const modelCenter = box.getCenter(new THREE.Vector3());
-        
+
         // Calculate camera position relative to model center
         const camOffset = new THREE.Vector3().subVectors(camera.position, modelCenter);
         url.searchParams.set('camOffsetX', camOffset.x.toFixed(3));
         url.searchParams.set('camOffsetY', camOffset.y.toFixed(3));
         url.searchParams.set('camOffsetZ', camOffset.z.toFixed(3));
-        
+
         // Calculate target offset relative to model center
         const targetOffset = new THREE.Vector3().subVectors(controls.target, modelCenter);
         url.searchParams.set('targetOffsetX', targetOffset.x.toFixed(3));
@@ -2561,12 +2878,12 @@ function serializeParamsToURL() {
         url.searchParams.set('targetY', controls.target.y.toFixed(3));
         url.searchParams.set('targetZ', controls.target.z.toFixed(3));
     }
-    
+
     // Restore model parameter if it existed
     if (modelParam) {
         url.searchParams.set('model', modelParam);
     }
-    
+
     window.history.replaceState({}, '', url);
 }
 
@@ -2574,13 +2891,13 @@ function serializeParamsToURL() {
 function deserializeParamsFromURL() {
     const urlParams = new URLSearchParams(window.location.search);
     let hasParams = false;
-    
+
     // Deserialize model/scene parameter first
     if (urlParams.has('model')) {
         params.selectedScene = urlParams.get('model');
         hasParams = true;
     }
-    
+
     // Deserialize display parameters
     if (urlParams.has('pointSize')) {
         params.pointSize = parseFloat(urlParams.get('pointSize'));
@@ -2606,7 +2923,7 @@ function deserializeParamsFromURL() {
         params.useShaderMaterial = urlParams.get('useShaderMaterial') === 'true';
         hasParams = true;
     }
-    
+
     // Deserialize animation parameters
     if (urlParams.has('animation')) {
         params.animation = urlParams.get('animation');
@@ -2620,7 +2937,7 @@ function deserializeParamsFromURL() {
         params.animAmplitude = parseFloat(urlParams.get('animAmplitude'));
         hasParams = true;
     }
-    
+
     // Deserialize wave parameters
     if (urlParams.has('wavesEnabled')) {
         params.wavesEnabled = urlParams.get('wavesEnabled') === 'true';
@@ -2654,7 +2971,7 @@ function deserializeParamsFromURL() {
         params.wavesDisplacement = parseFloat(urlParams.get('wavesDisplacement'));
         hasParams = true;
     }
-    
+
     // Store viewport parameters for restoration after model loads
     // We'll restore them in applyRestoredParams() after pointCloud is created
     if (urlParams.has('camOffsetX') || urlParams.has('camX')) {
@@ -2681,7 +2998,7 @@ function deserializeParamsFromURL() {
         }
         hasParams = true;
     }
-    
+
     return hasParams;
 }
 
@@ -2691,7 +3008,7 @@ function applyRestoredParams() {
     if (params.backgroundColor) {
         renderer.setClearColor(params.backgroundColor);
     }
-    
+
     // Apply point size and opacity to current material if exists
     if (pointCloud && currentMaterial) {
         if (!params.useShaderMaterial && currentMaterial.size !== undefined) {
@@ -2707,7 +3024,7 @@ function applyRestoredParams() {
             }
         }
     }
-    
+
     // Apply color mode and custom color if needed
     if (pointCloud && currentMaterial) {
         if (params.colorMode === 'custom') {
@@ -2725,7 +3042,7 @@ function applyRestoredParams() {
             }
         }
     }
-    
+
     // Apply animation if waves are enabled
     if (params.wavesEnabled && params.animation !== 'spherical_waves') {
         params.animation = 'spherical_waves';
@@ -2740,13 +3057,13 @@ function applyRestoredParams() {
             applyAnimation('none');
         }
     }
-    
+
     // Apply viewport restoration if pointCloud exists
     if (params._restoreViewport && pointCloud && pointCloud.geometry) {
         pointCloud.geometry.computeBoundingBox();
         const box = pointCloud.geometry.boundingBox;
         const modelCenter = box.getCenter(new THREE.Vector3());
-        
+
         if (params._useRelativeViewport) {
             // Restore relative viewport
             camera.position.set(
@@ -2764,7 +3081,7 @@ function applyRestoredParams() {
             camera.position.set(params._camX, params._camY, params._camZ);
             controls.target.set(params._targetX, params._targetY, params._targetZ);
         }
-        
+
         controls.update();
         params._restoreViewport = false; // Clear flag after restoration
     }
@@ -2774,13 +3091,13 @@ function applyRestoredParams() {
 async function loadModelsList() {
     console.log('🔵 [DEBUG] loadModelsList() called');
     console.log('🔵 [DEBUG] Current defaultScenes:', defaultScenes);
-    
+
     try {
         // Try to fetch from API endpoint
         const apiUrl = '/api/models';
         console.log('🔵 [DEBUG] Fetching from API:', apiUrl);
         console.log('🔵 [DEBUG] Full URL:', window.location.origin + apiUrl);
-        
+
         const response = await fetch(apiUrl);
         console.log('🔵 [DEBUG] Response status:', response.status, response.statusText);
         console.log('🔵 [DEBUG] Response ok:', response.ok);
@@ -2788,19 +3105,19 @@ async function loadModelsList() {
             'content-type': response.headers.get('content-type'),
             'access-control-allow-origin': response.headers.get('access-control-allow-origin')
         });
-        
+
         if (!response.ok) {
             console.error('🔴 [ERROR] Response not OK:', response.status, response.statusText);
             throw new Error(`Failed to load models: ${response.statusText}`);
         }
-        
+
         const data = await response.json();
         console.log('🔵 [DEBUG] Parsed JSON data:', data);
         console.log('🔵 [DEBUG] data.success:', data.success);
         console.log('🔵 [DEBUG] data.models:', data.models);
         console.log('🔵 [DEBUG] data.models is array:', Array.isArray(data.models));
         console.log('🔵 [DEBUG] data.models length:', data.models ? data.models.length : 'null/undefined');
-        
+
         if (data.success && Array.isArray(data.models) && data.models.length > 0) {
             defaultScenes = data.models;
             console.log('✅ [SUCCESS] Loaded models from server:', defaultScenes);
@@ -2842,7 +3159,7 @@ function loadSceneFromURL() {
 async function initializeApp() {
     console.log('🟢 [DEBUG] ========== initializeApp() STARTED ==========');
     console.log('🟢 [DEBUG] Current defaultScenes before init:', defaultScenes);
-    
+
     // Deserialize parameters from URL first (before GUI initialization)
     const hasURLParams = deserializeParamsFromURL();
     if (hasURLParams) {
@@ -2850,20 +3167,20 @@ async function initializeApp() {
         // Apply restored parameters immediately
         applyRestoredParams();
     }
-    
+
     // Initialize GUI first (with empty scenes list)
     console.log('🟢 [DEBUG] Calling initGUI()...');
-initGUI();
+    initGUI();
     console.log('🟢 [DEBUG] initGUI() completed');
     console.log('🟢 [DEBUG] selectedSceneCtrl after initGUI:', selectedSceneCtrl);
-    
+
     // Load models list from server
     console.log('🟢 [DEBUG] Calling loadModelsList()...');
     const modelsLoaded = await loadModelsList();
     console.log('🟢 [DEBUG] loadModelsList() returned:', modelsLoaded);
     console.log('🟢 [DEBUG] defaultScenes after loadModelsList:', defaultScenes);
     console.log('🟢 [DEBUG] defaultScenes.length:', defaultScenes.length);
-    
+
     if (modelsLoaded && defaultScenes.length > 0) {
         console.log('✅ [SUCCESS] Models loaded successfully, updating GUI...');
         // Update GUI with loaded models
@@ -2876,7 +3193,7 @@ initGUI();
                 : defaultScenes;
             selectedSceneCtrl.options(displayOptions);
             console.log('🟢 [DEBUG] Options updated');
-            
+
             // Preserve custom file name if it's currently selected
             if (currentCustomFileName && params.selectedScene === currentCustomFileName) {
                 // Keep custom file name selected
@@ -2895,31 +3212,31 @@ initGUI();
                     console.log('🟢 [DEBUG] Set default scene to:', params.selectedScene);
                 }
             }
-            
+
             // Update display to reflect the selected scene
             selectedSceneCtrl.updateDisplay();
             console.log('🟢 [DEBUG] Display updated');
         } else {
             console.warn('🟡 [WARNING] selectedSceneCtrl is null, cannot update GUI');
         }
-        
+
         // Try to load scene from URL parameter, otherwise load first default scene
         console.log('🟢 [DEBUG] Checking URL parameters...');
         if (!loadSceneFromURL()) {
             console.log('🟢 [DEBUG] No URL parameter, loading first default scene...');
-    const firstScene = defaultScenes[0];
+            const firstScene = defaultScenes[0];
             params.selectedScene = firstScene;
-            
+
             // Update URL parameter with first scene
             updateURLParameter('model', firstScene);
             console.log('🟢 [DEBUG] Updated URL parameter to:', firstScene);
-            
+
             if (selectedSceneCtrl) {
                 selectedSceneCtrl.updateDisplay();
             }
-    const url = `default_scenes/${firstScene}`;
+            const url = `default_scenes/${firstScene}`;
             console.log('🟢 [DEBUG] Loading scene from URL:', url);
-    loadFileFromURL(url, firstScene);
+            loadFileFromURL(url, firstScene);
         } else {
             console.log('🟢 [DEBUG] Scene loaded from URL parameter');
         }
@@ -2937,7 +3254,7 @@ initGUI();
             selectedSceneCtrl.disable();
         }
     }
-    
+
     console.log('🟢 [DEBUG] ========== initializeApp() COMPLETED ==========');
 }
 
