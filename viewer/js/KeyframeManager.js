@@ -60,24 +60,11 @@ export class KeyframeManager {
      * @private
      */
     captureCurrentState() {
-        return {
+        const isSplatting = this.params.isGaussianSplatting || false;
+        
+        const state = {
             sceneId: this.params.selectedScene || null,
-            pointPercent: this.params.pointPercent,
-            maxPoints: this.params.maxPoints,
-            useShaderMaterial: this.params.useShaderMaterial,
-            pointSize: this.params.pointSize,
-            opacity: this.params.opacity,
-            colorMode: this.params.colorMode,
-            customColor: this.params.customColor,
             backgroundColor: this.params.backgroundColor,
-            wavesEnabled: this.params.wavesEnabled,
-            wavesAmplitude: this.params.wavesAmplitude,
-            wavesPeriod: this.params.wavesPeriod,
-            wavesSpeed: this.params.wavesSpeed,
-            wavesColor: this.params.wavesColor,
-            wavesColorIntensity: this.params.wavesColorIntensity,
-            wavesDisplacementAxis: this.params.wavesDisplacementAxis,
-            wavesDisplacement: this.params.wavesDisplacement,
             camera: {
                 position: [
                     this.camera.position.x,
@@ -92,6 +79,27 @@ export class KeyframeManager {
                 fov: this.camera.fov
             }
         };
+        
+        // Only include display settings for point clouds, not for Gaussian Splatting
+        if (!isSplatting) {
+            state.pointPercent = this.params.pointPercent;
+            state.maxPoints = this.params.maxPoints;
+            state.useShaderMaterial = this.params.useShaderMaterial;
+            state.pointSize = this.params.pointSize;
+            state.opacity = this.params.opacity;
+            state.colorMode = this.params.colorMode;
+            state.customColor = this.params.customColor;
+            state.wavesEnabled = this.params.wavesEnabled;
+            state.wavesAmplitude = this.params.wavesAmplitude;
+            state.wavesPeriod = this.params.wavesPeriod;
+            state.wavesSpeed = this.params.wavesSpeed;
+            state.wavesColor = this.params.wavesColor;
+            state.wavesColorIntensity = this.params.wavesColorIntensity;
+            state.wavesDisplacementAxis = this.params.wavesDisplacementAxis;
+            state.wavesDisplacement = this.params.wavesDisplacement;
+        }
+        
+        return state;
     }
 
     /**

@@ -10,6 +10,9 @@ import { store } from './store.js';
 import { KeyframeManager } from './KeyframeManager.js';
 import { KeyframeAnimator } from './KeyframeAnimator.js';
 
+// Spark for Gaussian Splatting
+import { SplatMesh } from '@sparkjsdev/spark';
+
 // Application version
 const APP_VERSION = '0.0.1';
 
@@ -68,6 +71,11 @@ let originalPointCount = 0; // Store original point count
 let defaultScenes = [];
 // Current custom file name (if loaded, not added to defaultScenes)
 let currentCustomFileName = null;
+
+// Gaussian Splatting state
+let isGaussianSplatting = false;
+let splatMesh = null;
+let guiControls = {}; // Store references to GUI controls for conditional enabling/disabling
 
 // Debounced camera position update for URL
 let cameraUpdateTimeout = null;
@@ -134,6 +142,8 @@ const params = {
             showNotification('Failed to create share link. Please try again.', 'error');
         }
     },
+    // Gaussian Splatting flag
+    isGaussianSplatting: false, // Whether current file is Gaussian Splatting
     // Spherical Waves Animation
     wavesEnabled: false, // Enable/disable spherical waves
     wavesAmplitude: 3.0, // Wave width (1-10) - how many points will be affected by wave
@@ -170,87 +180,9 @@ function initKeyframeSystem() {
 
 // ==================== File Loading ====================
 
-const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('file-input');
-const btnOpen = document.getElementById('btn-open');
 
-// Drag & Drop - Global handlers on canvas and body
-let dragCounter = 0; // Track nested drag events
-
-function handleDragEnter(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter++;
-    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-        dropzone.classList.remove('hidden');
-        dropzone.classList.add('drag-active');
-    }
-}
-
-function handleDragLeave(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter--;
-    // Use setTimeout to handle nested element transitions
-    setTimeout(() => {
-        if (dragCounter === 0) {
-            dropzone.classList.remove('drag-active');
-            // Only hide if no file is being loaded
-            if (!pointCloud) {
-                dropzone.classList.add('hidden');
-            }
-        }
-    }, 50);
-}
-
-function handleDragOver(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'copy';
-}
-
-function handleDrop(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter = 0;
-    dropzone.classList.remove('drag-active');
-
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-        const file = files[0];
-        const ext = file.name.toLowerCase().split('.').pop();
-        if (ext === 'glb' || ext === 'ply' || ext === 'sog') {
-            loadFile(file);
-        } else {
-            alert('Unsupported file format. Please use .ply, .sog, or .glb files.');
-            // Show dropzone again if no model is loaded
-            if (!pointCloud) {
-                dropzone.classList.remove('hidden');
-            }
-        }
-    }
-}
-
-// Add drag & drop handlers to canvas and body
-canvas.addEventListener('dragenter', handleDragEnter);
-canvas.addEventListener('dragover', handleDragOver);
-canvas.addEventListener('dragleave', handleDragLeave);
-canvas.addEventListener('drop', handleDrop);
-
-document.body.addEventListener('dragenter', handleDragEnter);
-document.body.addEventListener('dragover', handleDragOver);
-document.body.addEventListener('dragleave', handleDragLeave);
-document.body.addEventListener('drop', handleDrop);
-
-// Also keep existing dropzone handlers for compatibility
-dropzone.addEventListener('dragover', handleDragOver);
-dropzone.addEventListener('drop', handleDrop);
-
-// File input
-btnOpen.addEventListener('click', () => {
-    fileInput.click();
-});
-
+// File input handler
 fileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -293,15 +225,11 @@ async function loadFileFromURL(url, filename) {
     } catch (error) {
         console.error('Error loading file from URL:', error);
         alert('Error loading file: ' + error.message);
-        // Show dropzone if file loading failed
-        if (!pointCloud) {
-            dropzone.classList.remove('hidden');
-        }
     }
 }
 
 // Load file
-function loadFile(file) {
+async function loadFile(file) {
     const ext = file.name.toLowerCase().split('.').pop();
     fileSize = file.size;
 
@@ -324,7 +252,13 @@ function loadFile(file) {
     if (ext === 'glb') {
         loadGLB(file);
     } else if (ext === 'ply' || ext === 'sog') {
-        loadPLY(file);
+        // Detect if this is Gaussian Splatting format
+        const isGaussian = await detectGaussianSplatting(file);
+        if (isGaussian) {
+            await loadGaussianSplatting(file);
+        } else {
+            loadPLY(file);
+        }
     } else {
         alert('Unsupported file format');
     }
@@ -332,6 +266,20 @@ function loadFile(file) {
 
 // Load GLB
 async function loadGLB(file) {
+    // Clean up previous objects
+    isGaussianSplatting = false;
+    params.isGaussianSplatting = false;
+    updateGUIForSplatting(false);
+    
+    // Remove old splat mesh
+    if (splatMesh) {
+        scene.remove(splatMesh);
+        if (splatMesh.dispose) {
+            splatMesh.dispose();
+        }
+        splatMesh = null;
+    }
+    
     const loader = new GLTFLoader();
 
     // Setup DRACO decoder
@@ -461,7 +409,6 @@ async function loadGLB(file) {
 
             // Update GUI info
             updateInfo(originalPointCount);
-            dropzone.classList.add('hidden');
             if (!gui) initGUI();
 
             // Setup camera and apply animation (will be done in the common section below)
@@ -509,7 +456,6 @@ async function loadGLB(file) {
         if (!mesh.isPoints) {
             const pointCount = pointCloud ? pointCloud.geometry.attributes.position.count : 0;
             updateInfo(pointCount);
-            dropzone.classList.add('hidden');
             if (!gui) initGUI();
         }
 
@@ -605,8 +551,166 @@ async function loadGLB(file) {
     });
 }
 
+// Detect if file is Gaussian Splatting format
+async function detectGaussianSplatting(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const text = e.target.result;
+            
+            // Check if file is actually a PLY file
+            if (!text.trim().startsWith('ply')) {
+                resolve(false);
+                return;
+            }
+            
+            // Read first 200 lines to check for Gaussian Splatting properties
+            const lines = text.split('\n').slice(0, 200);
+            const headerText = lines.join('\n');
+            
+            // Gaussian Splatting specific properties
+            const gaussianProperties = [
+                'f_dc_0', 'f_dc_1', 'f_dc_2',  // Spherical harmonics DC components
+                'scale_0', 'scale_1', 'scale_2',  // Scale parameters
+                'rot_0', 'rot_1', 'rot_2', 'rot_3'  // Rotation quaternion
+            ];
+            
+            // Check if any Gaussian Splatting properties are present
+            const hasGaussianProperties = gaussianProperties.some(prop => 
+                headerText.includes(`property ${prop}`) || 
+                headerText.includes(`property float ${prop}`) ||
+                headerText.includes(`property double ${prop}`)
+            );
+            
+            resolve(hasGaussianProperties);
+        };
+        
+        reader.onerror = () => {
+            resolve(false);
+        };
+        
+        // Read only first part of file (first 50KB should be enough for header)
+        const blob = file.slice(0, 50000);
+        reader.readAsText(blob);
+    });
+}
+
+// Load Gaussian Splatting via Spark
+async function loadGaussianSplatting(file) {
+    try {
+        // Clean up previous objects
+        isGaussianSplatting = false;
+        params.isGaussianSplatting = false;
+        updateGUIForSplatting(false);
+        
+        // Remove old point cloud
+        if (pointCloud) {
+            scene.remove(pointCloud);
+            if (pointCloud.geometry) pointCloud.geometry.dispose();
+            if (pointCloud.material) pointCloud.material.dispose();
+            pointCloud = null;
+            currentMaterial = null;
+        }
+        
+        // Remove old splat mesh
+        if (splatMesh) {
+            scene.remove(splatMesh);
+            if (splatMesh.dispose) {
+                splatMesh.dispose();
+            }
+            splatMesh = null;
+        }
+        
+        // Create object URL for the file
+        const fileUrl = URL.createObjectURL(file);
+        
+        // Create SplatMesh
+        console.log('Loading Gaussian Splatting via Spark...');
+        splatMesh = new SplatMesh({ url: fileUrl });
+        
+        // Add to scene
+        scene.add(splatMesh);
+        
+        // Set flags
+        isGaussianSplatting = true;
+        params.isGaussianSplatting = true;
+        
+        // Wait for splat mesh to load (Spark loads asynchronously)
+        // We'll set up camera after a short delay to allow bounding box to be computed
+        setTimeout(() => {
+            if (splatMesh) {
+                // Calculate bounding box
+                splatMesh.updateMatrixWorld(true);
+                const box = new THREE.Box3().setFromObject(splatMesh);
+                
+                if (!box.isEmpty() && isFinite(box.min.x)) {
+                    const center = box.getCenter(new THREE.Vector3());
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    
+                    const fov = camera.fov * (Math.PI / 180);
+                    let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
+                    
+                    if (!isFinite(cameraZ) || cameraZ <= 0 || cameraZ > 1e6) {
+                        cameraZ = maxDim > 0 ? maxDim * 2 : 10;
+                    }
+                    
+                    camera.position.set(center.x, center.y, center.z + cameraZ);
+                    controls.target.copy(center);
+                    controls.update();
+                    
+                    console.log('Gaussian Splatting camera setup:', {
+                        position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                        target: { x: controls.target.x, y: controls.target.y, z: controls.target.z }
+                    });
+                } else {
+                    // Fallback camera position
+                    camera.position.set(0, 2, 10);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                }
+            }
+        }, 100);
+        
+        // Update GUI
+        fileSize = file.size;
+        updateInfo(0); // Splatting doesn't have a simple point count
+        params.points = 'Gaussian Splatting';
+        if (!gui) initGUI();
+        
+        // Update GUI controls for Splatting
+        updateGUIForSplatting(true);
+        
+        console.log('✅ Gaussian Splatting loaded successfully');
+        
+        // Note: We don't revoke the object URL immediately as Spark may need it
+        // It will be cleaned up when a new file is loaded
+        
+    } catch (error) {
+        console.error('Error loading Gaussian Splatting:', error);
+        alert('Error loading Gaussian Splatting file:\n' + (error.message || 'Unknown error'));
+        isGaussianSplatting = false;
+        params.isGaussianSplatting = false;
+        updateGUIForSplatting(false);
+    }
+}
+
 // Load PLY/SOG
 function loadPLY(file) {
+    // Clean up previous objects
+    isGaussianSplatting = false;
+    params.isGaussianSplatting = false;
+    updateGUIForSplatting(false);
+    
+    // Remove old splat mesh
+    if (splatMesh) {
+        scene.remove(splatMesh);
+        if (splatMesh.dispose) {
+            splatMesh.dispose();
+        }
+        splatMesh = null;
+    }
+    
     const reader = new FileReader();
     reader.onload = (e) => {
         const text = e.target.result;
@@ -713,7 +817,6 @@ function parsePLY(text) {
 
     createPointCloud(positionAttr, colorAttr);
     updateInfo(vertexCount);
-    dropzone.classList.add('hidden');
     if (!gui) {
         initGUI();
     }
@@ -1247,6 +1350,63 @@ function createPointCloud(positionAttr, colorAttr) {
 
 // ==================== GUI Setup ====================
 
+// Update GUI controls based on whether Gaussian Splatting is loaded
+function updateGUIForSplatting(enabled) {
+    // enabled = true means Gaussian Splatting is loaded, disable display controls
+    // enabled = false means point cloud is loaded, enable all controls
+    
+    if (!gui || Object.keys(guiControls).length === 0) {
+        // GUI not initialized yet, skip
+        return;
+    }
+    
+    if (enabled) {
+        // Disable display controls for Splatting
+        if (guiControls.pointSize) guiControls.pointSize.disable();
+        if (guiControls.opacity) guiControls.opacity.disable();
+        if (guiControls.colorMode) guiControls.colorMode.disable();
+        if (guiControls.customColor) guiControls.customColor.disable();
+        if (guiControls.useShaderMaterial) guiControls.useShaderMaterial.disable();
+        
+        // Disable animation controls (waves)
+        if (guiControls.wavesEnabled) guiControls.wavesEnabled.disable();
+        if (guiControls.wavesAmplitude) guiControls.wavesAmplitude.disable();
+        if (guiControls.wavesPeriod) guiControls.wavesPeriod.disable();
+        if (guiControls.wavesSpeed) guiControls.wavesSpeed.disable();
+        if (guiControls.wavesColor) guiControls.wavesColor.disable();
+        if (guiControls.wavesColorIntensity) guiControls.wavesColorIntensity.disable();
+        if (guiControls.wavesDisplacementAxis) guiControls.wavesDisplacementAxis.disable();
+        if (guiControls.wavesDisplacement) guiControls.wavesDisplacement.disable();
+        
+        // Disable point filtering controls
+        if (guiControls.pointPercent) guiControls.pointPercent.disable();
+        if (guiControls.maxPoints) guiControls.maxPoints.disable();
+        
+        // Keep backgroundColor enabled (works for both types)
+    } else {
+        // Enable all controls for point cloud
+        if (guiControls.pointSize) guiControls.pointSize.enable();
+        if (guiControls.opacity) guiControls.opacity.enable();
+        if (guiControls.colorMode) guiControls.colorMode.enable();
+        if (guiControls.customColor) guiControls.customColor.enable();
+        if (guiControls.useShaderMaterial) guiControls.useShaderMaterial.enable();
+        
+        // Enable animation controls
+        if (guiControls.wavesEnabled) guiControls.wavesEnabled.enable();
+        if (guiControls.wavesAmplitude) guiControls.wavesAmplitude.enable();
+        if (guiControls.wavesPeriod) guiControls.wavesPeriod.enable();
+        if (guiControls.wavesSpeed) guiControls.wavesSpeed.enable();
+        if (guiControls.wavesColor) guiControls.wavesColor.enable();
+        if (guiControls.wavesColorIntensity) guiControls.wavesColorIntensity.enable();
+        if (guiControls.wavesDisplacementAxis) guiControls.wavesDisplacementAxis.enable();
+        if (guiControls.wavesDisplacement) guiControls.wavesDisplacement.enable();
+        
+        // Enable point filtering controls
+        if (guiControls.pointPercent) guiControls.pointPercent.enable();
+        if (guiControls.maxPoints) guiControls.maxPoints.enable();
+    }
+}
+
 function initGUI() {
     // Destroy existing GUI if it exists
     if (gui) {
@@ -1579,6 +1739,24 @@ function initGUI() {
 
     animFolder.open();
 
+    // Store references to GUI controls for conditional enabling/disabling
+    guiControls.pointSize = pointSizeCtrl;
+    guiControls.opacity = opacityCtrl;
+    guiControls.colorMode = colorModeCtrl;
+    guiControls.customColor = customColorCtrl;
+    guiControls.useShaderMaterial = useShaderCtrl;
+    guiControls.backgroundColor = backgroundColorCtrl;
+    guiControls.wavesEnabled = wavesEnabledCtrl;
+    guiControls.wavesAmplitude = wavesAmplitudeCtrl;
+    guiControls.wavesPeriod = wavesPeriodCtrl;
+    guiControls.wavesSpeed = wavesSpeedCtrl;
+    guiControls.wavesColor = wavesColorCtrl;
+    guiControls.wavesColorIntensity = wavesColorIntensityCtrl;
+    guiControls.wavesDisplacementAxis = wavesDisplacementAxisCtrl;
+    guiControls.wavesDisplacement = wavesDisplacementCtrl;
+    guiControls.pointPercent = pointPercentCtrl;
+    guiControls.maxPoints = maxPointsCtrl;
+
     // ==================== Keyframes Folder ====================
 
     const keyframesFolder = gui.addFolder('Keyframes 🎬');
@@ -1774,6 +1952,9 @@ function initGUI() {
         margin-top: 8px;
     `;
     gui.domElement.appendChild(versionElement);
+
+    // Initialize GUI controls state (all enabled by default for point clouds)
+    updateGUIForSplatting(false);
 
 }
 
@@ -2481,25 +2662,32 @@ function applyViewerState(state, options = {}) {
 
     console.log('🎬 Applying viewer state from:', options.source || 'unknown');
 
-    // Update params object with new state
-    params.pointPercent = state.pointPercent;
-    params.maxPoints = state.maxPoints;
-    params.pointSize = state.pointSize;
-    params.opacity = state.opacity;
-    params.colorMode = state.colorMode;
-    params.customColor = state.customColor;
+    // Update background color (works for both point clouds and Splatting)
     params.backgroundColor = state.backgroundColor;
-    params.wavesEnabled = state.wavesEnabled;
-    params.wavesAmplitude = state.wavesAmplitude;
-    params.wavesPeriod = state.wavesPeriod;
-    params.wavesSpeed = state.wavesSpeed;
-    params.wavesColor = state.wavesColor;
-    params.wavesColorIntensity = state.wavesColorIntensity;
-    params.wavesDisplacementAxis = state.wavesDisplacementAxis;
-    params.wavesDisplacement = state.wavesDisplacement;
+    renderer.setClearColor(state.backgroundColor);
 
-    // Apply to renderer
-    if (currentMaterial) {
+    // Only apply display settings if not Gaussian Splatting
+    if (!isGaussianSplatting) {
+        // Update params object with new state
+        if (state.pointPercent !== undefined) params.pointPercent = state.pointPercent;
+        if (state.maxPoints !== undefined) params.maxPoints = state.maxPoints;
+        if (state.pointSize !== undefined) params.pointSize = state.pointSize;
+        if (state.opacity !== undefined) params.opacity = state.opacity;
+        if (state.colorMode !== undefined) params.colorMode = state.colorMode;
+        if (state.customColor !== undefined) params.customColor = state.customColor;
+        if (state.wavesEnabled !== undefined) params.wavesEnabled = state.wavesEnabled;
+        if (state.wavesAmplitude !== undefined) params.wavesAmplitude = state.wavesAmplitude;
+        if (state.wavesPeriod !== undefined) params.wavesPeriod = state.wavesPeriod;
+        if (state.wavesSpeed !== undefined) params.wavesSpeed = state.wavesSpeed;
+        if (state.wavesColor !== undefined) params.wavesColor = state.wavesColor;
+        if (state.wavesColorIntensity !== undefined) params.wavesColorIntensity = state.wavesColorIntensity;
+        if (state.wavesDisplacementAxis !== undefined) params.wavesDisplacementAxis = state.wavesDisplacementAxis;
+        if (state.wavesDisplacement !== undefined) params.wavesDisplacement = state.wavesDisplacement;
+        if (state.useShaderMaterial !== undefined) params.useShaderMaterial = state.useShaderMaterial;
+    }
+
+    // Apply to renderer (only for point clouds)
+    if (currentMaterial && !isGaussianSplatting) {
         // Update point size
         if (!params.useShaderMaterial) {
             currentMaterial.size = state.pointSize;
@@ -2554,9 +2742,6 @@ function applyViewerState(state, options = {}) {
         currentMaterial.needsUpdate = true;
     }
 
-    // Update background color
-    renderer.setClearColor(state.backgroundColor);
-
     // Update camera position and target during animation for smooth camera movement
     if (state.camera) {
         camera.position.set(...state.camera.position);
@@ -2566,15 +2751,17 @@ function applyViewerState(state, options = {}) {
         controls.update();
     }
 
-    // Update waves animation state
-    if (state.wavesEnabled && currentAnimation !== 'spherical_waves') {
-        params.animation = 'spherical_waves';
-        currentAnimation = 'spherical_waves';
-        applyAnimation(currentAnimation);
-    } else if (!state.wavesEnabled && currentAnimation === 'spherical_waves') {
-        params.animation = 'none';
-        currentAnimation = 'none';
-        applyAnimation(currentAnimation);
+    // Update waves animation state (only for point clouds)
+    if (!isGaussianSplatting) {
+        if (state.wavesEnabled && currentAnimation !== 'spherical_waves') {
+            params.animation = 'spherical_waves';
+            currentAnimation = 'spherical_waves';
+            applyAnimation(currentAnimation);
+        } else if (!state.wavesEnabled && currentAnimation === 'spherical_waves') {
+            params.animation = 'none';
+            currentAnimation = 'none';
+            applyAnimation(currentAnimation);
+        }
     }
 
     // Update GUI displays
@@ -3244,10 +3431,6 @@ async function initializeApp() {
         console.warn('🟡 [WARNING] No models available. User can still load custom files.');
         console.warn('🟡 [WARNING] modelsLoaded:', modelsLoaded);
         console.warn('🟡 [WARNING] defaultScenes.length:', defaultScenes.length);
-        // Show dropzone if no models are available
-        if (!pointCloud) {
-            dropzone.classList.remove('hidden');
-        }
         // Hide or disable scene selector if no models
         if (selectedSceneCtrl) {
             console.log('🟢 [DEBUG] Disabling scene selector...');
