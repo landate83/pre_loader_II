@@ -251,7 +251,10 @@ async function loadFile(file) {
 
     if (ext === 'glb') {
         loadGLB(file);
-    } else if (ext === 'ply' || ext === 'sog') {
+    } else if (ext === 'sog') {
+        // .sog files are always Gaussian Splatting format
+        await loadGaussianSplatting(file);
+    } else if (ext === 'ply') {
         // Detect if this is Gaussian Splatting format
         const isGaussian = await detectGaussianSplatting(file);
         if (isGaussian) {
@@ -554,7 +557,33 @@ async function loadGLB(file) {
 // Detect if file is Gaussian Splatting format
 async function detectGaussianSplatting(file) {
     return new Promise((resolve) => {
+        // First check if file starts with ZIP signature (PK) - likely compressed .sog
         const reader = new FileReader();
+        
+        // Read first few bytes to check for ZIP signature
+        const blob = file.slice(0, 4);
+        const arrayBufferReader = new FileReader();
+        
+        arrayBufferReader.onload = (e) => {
+            const bytes = new Uint8Array(e.target.result);
+            // Check for ZIP signature "PK" (0x50 0x4B)
+            if (bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4B) {
+                // This is likely a compressed .sog file
+                resolve(true);
+                return;
+            }
+            
+            // If not ZIP, try reading as text for PLY header
+            const textBlob = file.slice(0, 50000);
+            reader.readAsText(textBlob);
+        };
+        
+        arrayBufferReader.onerror = () => {
+            // Fallback to text reading
+            const textBlob = file.slice(0, 50000);
+            reader.readAsText(textBlob);
+        };
+        
         reader.onload = (e) => {
             const text = e.target.result;
             
@@ -589,9 +618,8 @@ async function detectGaussianSplatting(file) {
             resolve(false);
         };
         
-        // Read only first part of file (first 50KB should be enough for header)
-        const blob = file.slice(0, 50000);
-        reader.readAsText(blob);
+        // Start with binary check
+        arrayBufferReader.readAsArrayBuffer(blob);
     });
 }
 
@@ -717,6 +745,17 @@ function loadPLY(file) {
 
         // Check if file is actually a PLY file
         if (!text.trim().startsWith('ply')) {
+            // If file starts with "PK" (ZIP signature), it might be a compressed .sog file
+            // Try loading it as Gaussian Splatting instead
+            if (text.startsWith('PK') || file.name.toLowerCase().endsWith('.sog')) {
+                console.log('File appears to be compressed or .sog format, trying Spark...');
+                loadGaussianSplatting(file).catch(err => {
+                    console.error('Failed to load as Gaussian Splatting:', err);
+                    alert('Invalid file format. Please make sure you are loading a valid .ply or .sog file.');
+                });
+                return;
+            }
+            
             alert('Invalid PLY file format. File does not appear to be a PLY file.\n\nPlease make sure you are loading a valid .ply or .sog file.');
             console.error('Invalid PLY header. Expected "ply", got:', text.substring(0, 20));
             return;
