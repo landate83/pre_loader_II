@@ -4,6 +4,35 @@ CLI utility for converting point cloud files (.ply/.sog) to GLB format with Drac
 
 ## Installation
 
+## Creating the `pc2glb` console script
+
+This project uses Python's `console_script` mechanism so that the CLI can be run as `pc2glb` from anywhere.
+
+1. In the root of the project there is a `pyproject.toml` file with the following section:
+
+```toml
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pointcloud-converter"
+version = "0.1.0"
+
+[project.scripts]
+pc2glb = "converter.cli:main"
+```
+
+2. The entry `pc2glb = "converter.cli:main"` tells `setuptools` to create an executable named `pc2glb` that calls the `main` function from `converter/cli.py`.
+
+3. To install this console script into your environment, run from the project root:
+
+```bash
+pip install -e .
+```
+
+After that, `pc2glb` will be available on your `PATH` (in the active Python environment) and can be used as a global command.
+
 ### 1. Install Python dependencies
 
 ```bash
@@ -36,6 +65,25 @@ npm install -g gltfpack
 
 ## Usage
 
+### Installation as a global CLI (`pc2glb`)
+
+Install the project in editable mode so that the `pc2glb` console command is available everywhere:
+
+```bash
+pip install -e .
+```
+
+After this you can run the converter from anywhere like this:
+
+```bash
+pc2glb input.ply -o output.glb --points 10000
+```
+
+Or enter interactive mode:
+
+```bash
+pc2glb model.ply
+```
 ### Output Formats
 
 The utility supports three output formats:
