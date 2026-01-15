@@ -1491,7 +1491,7 @@ function initGUI() {
         // Update URL parameter
         updateURLParameter('model', value);
         // Load the file
-        const url = `default_scenes/${value}`;
+        const url = `default_scenes/${encodeURIComponent(value)}`;
         loadFileFromURL(url, value);
     });
 
@@ -3374,7 +3374,7 @@ function loadSceneFromURL() {
         // Set the selected scene in params
         params.selectedScene = modelParam;
         // Load the file
-        const url = `default_scenes/${modelParam}`;
+        const url = `default_scenes/${encodeURIComponent(modelParam)}`;
         loadFileFromURL(url, modelParam);
         return true;
     }
@@ -3460,7 +3460,7 @@ async function initializeApp() {
             if (selectedSceneCtrl) {
                 selectedSceneCtrl.updateDisplay();
             }
-            const url = `default_scenes/${firstScene}`;
+            const url = `default_scenes/${encodeURIComponent(firstScene)}`;
             console.log('🟢 [DEBUG] Loading scene from URL:', url);
             loadFileFromURL(url, firstScene);
         } else {
